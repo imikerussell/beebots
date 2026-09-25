@@ -1,0 +1,1666 @@
+[
+ {
+  "instId": "BTC-USD_UM_XPERP-310404",
+  "vol24h_usd": 300250111,
+  "last": 84461.8,
+  "min_order_usd": 8.45,
+  "spread_bp": 0.01,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ETH-USD_UM_XPERP-310404",
+  "vol24h_usd": 68880089,
+  "last": 2690.98,
+  "min_order_usd": 2.69,
+  "spread_bp": 1.19,
+  "kind": "crypto"
+ },
+ {
+  "instId": "XRP-USD_UM_XPERP-310404",
+  "vol24h_usd": 62602780,
+  "last": 1.5046,
+  "min_order_usd": 1.5,
+  "spread_bp": 1.33,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ZEC-USD_UM_XPERP-310530",
+  "vol24h_usd": 35702433,
+  "last": 1525.88,
+  "min_order_usd": 15.26,
+  "spread_bp": 0.2,
+  "kind": "crypto"
+ },
+ {
+  "instId": "NEAR-USD_UM_XPERP-310613",
+  "vol24h_usd": 32474827,
+  "last": 4.358,
+  "min_order_usd": 4.36,
+  "spread_bp": 16.06,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SOL-USD_UM_XPERP-310404",
+  "vol24h_usd": 24559490,
+  "last": 115.4,
+  "min_order_usd": 1.15,
+  "spread_bp": 2.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SUI-USD_UM_XPERP-310404",
+  "vol24h_usd": 20773397,
+  "last": 0.9692,
+  "min_order_usd": 0.97,
+  "spread_bp": 5.16,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BCH-USD_UM_XPERP-310530",
+  "vol24h_usd": 12233885,
+  "last": 340.8,
+  "min_order_usd": 3.41,
+  "spread_bp": 8.79,
+  "kind": "crypto"
+ },
+ {
+  "instId": "HYPE-USD_UM_XPERP-310523",
+  "vol24h_usd": 12181157,
+  "last": 93.82,
+  "min_order_usd": 9.38,
+  "spread_bp": 0.11,
+  "kind": "crypto"
+ },
+ {
+  "instId": "TAO-USD_UM_XPERP-310523",
+  "vol24h_usd": 9233151,
+  "last": 292.9,
+  "min_order_usd": 2.93,
+  "spread_bp": 10.24,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AVAX-USD_UM_XPERP-310530",
+  "vol24h_usd": 9191192,
+  "last": 10.259,
+  "min_order_usd": 10.26,
+  "spread_bp": 5.84,
+  "kind": "crypto"
+ },
+ {
+  "instId": "DOGE-USD_UM_XPERP-310404",
+  "vol24h_usd": 7926038,
+  "last": 0.09455,
+  "min_order_usd": 0.95,
+  "spread_bp": 4.23,
+  "kind": "crypto"
+ },
+ {
+  "instId": "LINK-USD_UM_XPERP-310523",
+  "vol24h_usd": 7867834,
+  "last": 12.47,
+  "min_order_usd": 12.47,
+  "spread_bp": 3.21,
+  "kind": "crypto"
+ },
+ {
+  "instId": "XAU-USD_UM_XPERP-310502",
+  "vol24h_usd": 5942925,
+  "last": 4281.1,
+  "min_order_usd": 4.28,
+  "spread_bp": 0.23,
+  "kind": "commodity"
+ },
+ {
+  "instId": "PUMP-USD_UM_XPERP-310404",
+  "vol24h_usd": 5504603,
+  "last": 0.004027,
+  "min_order_usd": 4.03,
+  "spread_bp": 4.97,
+  "kind": "crypto"
+ },
+ {
+  "instId": "PENGU-USD_UM_XPERP-310711",
+  "vol24h_usd": 5256077,
+  "last": 0.010019,
+  "min_order_usd": 1.0,
+  "spread_bp": 5.99,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ONDO-USD_UM_XPERP-310620",
+  "vol24h_usd": 5015012,
+  "last": 0.4387,
+  "min_order_usd": 4.39,
+  "spread_bp": 2.28,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ENA-USD_UM_XPERP-310613",
+  "vol24h_usd": 4683776,
+  "last": 0.20791,
+  "min_order_usd": 20.79,
+  "spread_bp": 8.66,
+  "kind": "crypto"
+ },
+ {
+  "instId": "INJ-USD_UM_XPERP-310711",
+  "vol24h_usd": 4457501,
+  "last": 7.864,
+  "min_order_usd": 0.79,
+  "spread_bp": 19.07,
+  "kind": "crypto"
+ },
+ {
+  "instId": "LTC-USD_UM_XPERP-310404",
+  "vol24h_usd": 4367019,
+  "last": 68.86,
+  "min_order_usd": 6.89,
+  "spread_bp": 7.26,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CL-USD_UM_XPERP-310509",
+  "vol24h_usd": 4315741,
+  "last": 92.75,
+  "min_order_usd": 9.28,
+  "spread_bp": 1.08,
+  "kind": "commodity"
+ },
+ {
+  "instId": "PEPE-USD_UM_XPERP-310404",
+  "vol24h_usd": 4200820,
+  "last": 4.41e-06,
+  "min_order_usd": 4.41,
+  "spread_bp": 4.53,
+  "kind": "crypto"
+ },
+ {
+  "instId": "UNI-USD_UM_XPERP-310718",
+  "vol24h_usd": 2968679,
+  "last": 9.249,
+  "min_order_usd": 9.25,
+  "spread_bp": 23.77,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SOXL-USD_UM_XPERP-310627",
+  "vol24h_usd": 2762528,
+  "last": 141.61,
+  "min_order_usd": 1.42,
+  "spread_bp": 1.41,
+  "kind": "stock"
+ },
+ {
+  "instId": "WLD-USD_UM_XPERP-310613",
+  "vol24h_usd": 2728206,
+  "last": 0.4155,
+  "min_order_usd": 4.15,
+  "spread_bp": 2.41,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ARB-USD_UM_XPERP-310815",
+  "vol24h_usd": 2716622,
+  "last": 0.21714,
+  "min_order_usd": 0.22,
+  "spread_bp": 12.43,
+  "kind": "crypto"
+ },
+ {
+  "instId": "HBAR-USD_UM_XPERP-310815",
+  "vol24h_usd": 2638543,
+  "last": 0.0914,
+  "min_order_usd": 0.91,
+  "spread_bp": 3.28,
+  "kind": "crypto"
+ },
+ {
+  "instId": "XAG-USD_UM_XPERP-310509",
+  "vol24h_usd": 2211788,
+  "last": 64.09,
+  "min_order_usd": 0.64,
+  "spread_bp": 1.56,
+  "kind": "commodity"
+ },
+ {
+  "instId": "ADA-USD_UM_XPERP-310404",
+  "vol24h_usd": 2099013,
+  "last": 0.2418,
+  "min_order_usd": 2.42,
+  "spread_bp": 4.13,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SNDK-USD_UM_XPERP-310627",
+  "vol24h_usd": 1753347,
+  "last": 1784.0,
+  "min_order_usd": 1.78,
+  "spread_bp": 6.73,
+  "kind": "stock"
+ },
+ {
+  "instId": "LIT-USD_UM_XPERP-310704",
+  "vol24h_usd": 1746271,
+  "last": 5.4752,
+  "min_order_usd": 5.48,
+  "spread_bp": 9.13,
+  "kind": "crypto"
+ },
+ {
+  "instId": "MSTR-USD_UM_XPERP-310704",
+  "vol24h_usd": 1605468,
+  "last": 161.76,
+  "min_order_usd": 1.62,
+  "spread_bp": 12.98,
+  "kind": "stock"
+ },
+ {
+  "instId": "ALLO-USD_UM_XPERP-310718",
+  "vol24h_usd": 1597498,
+  "last": 0.28946,
+  "min_order_usd": 2.89,
+  "spread_bp": 27.78,
+  "kind": "crypto"
+ },
+ {
+  "instId": "TRUMP-USD_UM_XPERP-310704",
+  "vol24h_usd": 1385554,
+  "last": 2.013,
+  "min_order_usd": 0.2,
+  "spread_bp": 9.94,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ZAMA-USD_UM_XPERP-310725",
+  "vol24h_usd": 1360905,
+  "last": 0.09369,
+  "min_order_usd": 0.94,
+  "spread_bp": 4.27,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BZ-USD_UM_XPERP-310509",
+  "vol24h_usd": 1357309,
+  "last": 98.83,
+  "min_order_usd": 0.99,
+  "spread_bp": 1.01,
+  "kind": "commodity"
+ },
+ {
+  "instId": "AAVE-USD_UM_XPERP-310704",
+  "vol24h_usd": 1264681,
+  "last": 140.12,
+  "min_order_usd": 1.4,
+  "spread_bp": 3.57,
+  "kind": "crypto"
+ },
+ {
+  "instId": "FIL-USD_UM_XPERP-310718",
+  "vol24h_usd": 1263753,
+  "last": 0.9899,
+  "min_order_usd": 0.1,
+  "spread_bp": 6.06,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SPCX-USD_UM_XPERP-310613",
+  "vol24h_usd": 1179208,
+  "last": 148.47,
+  "min_order_usd": 1.48,
+  "spread_bp": 2.02,
+  "kind": "stock"
+ },
+ {
+  "instId": "USELESS-USD_UM_XPERP-310912",
+  "vol24h_usd": 1177098,
+  "last": 0.29858,
+  "min_order_usd": 2.99,
+  "spread_bp": 31.77,
+  "kind": "crypto"
+ },
+ {
+  "instId": "DASH-USD_UM_XPERP-310829",
+  "vol24h_usd": 1169295,
+  "last": 61.03,
+  "min_order_usd": 0.61,
+  "spread_bp": 16.38,
+  "kind": "crypto"
+ },
+ {
+  "instId": "PONS-USD_UM_XPERP-310919",
+  "vol24h_usd": 1137766,
+  "last": 0.6395,
+  "min_order_usd": 6.39,
+  "spread_bp": 17.2,
+  "kind": "crypto"
+ },
+ {
+  "instId": "MU-USD_UM_XPERP-310627",
+  "vol24h_usd": 1110731,
+  "last": 1060.87,
+  "min_order_usd": 10.61,
+  "spread_bp": 8.86,
+  "kind": "stock"
+ },
+ {
+  "instId": "XLM-USD_UM_XPERP-310704",
+  "vol24h_usd": 1083117,
+  "last": 0.20316,
+  "min_order_usd": 2.03,
+  "spread_bp": 10.34,
+  "kind": "crypto"
+ },
+ {
+  "instId": "XPL-USD_UM_XPERP-310711",
+  "vol24h_usd": 1076964,
+  "last": 0.09114,
+  "min_order_usd": 0.91,
+  "spread_bp": 18.67,
+  "kind": "crypto"
+ },
+ {
+  "instId": "FET-USD_UM_XPERP-310912",
+  "vol24h_usd": 1074702,
+  "last": 0.2015,
+  "min_order_usd": 2.02,
+  "spread_bp": 29.79,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CRCL-USD_UM_XPERP-310704",
+  "vol24h_usd": 1044890,
+  "last": 92.55,
+  "min_order_usd": 9.26,
+  "spread_bp": 2.16,
+  "kind": "stock"
+ },
+ {
+  "instId": "GRAM-USD_UM_XPERP-310620",
+  "vol24h_usd": 1040397,
+  "last": 1.421,
+  "min_order_usd": 1.42,
+  "spread_bp": 21.09,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RENDER-USD_UM_XPERP-310711",
+  "vol24h_usd": 1019403,
+  "last": 1.776,
+  "min_order_usd": 1.78,
+  "spread_bp": 5.63,
+  "kind": "crypto"
+ },
+ {
+  "instId": "VVV-USD_UM_XPERP-310704",
+  "vol24h_usd": 1007971,
+  "last": 31.302,
+  "min_order_usd": 3.13,
+  "spread_bp": 19.55,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ICP-USD_UM_XPERP-310711",
+  "vol24h_usd": 988951,
+  "last": 2.986,
+  "min_order_usd": 2.99,
+  "spread_bp": 6.68,
+  "kind": "crypto"
+ },
+ {
+  "instId": "JUP-USD_UM_XPERP-310829",
+  "vol24h_usd": 919136,
+  "last": 0.2913,
+  "min_order_usd": 2.91,
+  "spread_bp": 13.73,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SKHYNIX-USD_UM_XPERP-310704",
+  "vol24h_usd": 889351,
+  "last": 1337.0,
+  "min_order_usd": 1.34,
+  "spread_bp": 6.73,
+  "kind": "stock"
+ },
+ {
+  "instId": "ASTER-USD_UM_XPERP-310829",
+  "vol24h_usd": 867250,
+  "last": 0.7075,
+  "min_order_usd": 0.71,
+  "spread_bp": 11.31,
+  "kind": "crypto"
+ },
+ {
+  "instId": "PENDLE-USD_UM_XPERP-310919",
+  "vol24h_usd": 827415,
+  "last": 2.429,
+  "min_order_usd": 2.43,
+  "spread_bp": 45.35,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RE-USD_UM_XPERP-310620",
+  "vol24h_usd": 758699,
+  "last": 0.45256,
+  "min_order_usd": 4.53,
+  "spread_bp": 7.51,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BEAT-USD_UM_XPERP-310620",
+  "vol24h_usd": 750175,
+  "last": 0.09349,
+  "min_order_usd": 0.09,
+  "spread_bp": 13.92,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BNB-USD_UM_XPERP-310523",
+  "vol24h_usd": 714292,
+  "last": 775.3,
+  "min_order_usd": 7.75,
+  "spread_bp": 1.29,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BONK-USD_UM_XPERP-310725",
+  "vol24h_usd": 699705,
+  "last": 3.61e-06,
+  "min_order_usd": 0.36,
+  "spread_bp": 11.09,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RAY-USD_UM_XPERP-310919",
+  "vol24h_usd": 658321,
+  "last": 2.1217,
+  "min_order_usd": 2.12,
+  "spread_bp": 53.78,
+  "kind": "crypto"
+ },
+ {
+  "instId": "VIRTUAL-USD_UM_XPERP-310815",
+  "vol24h_usd": 597228,
+  "last": 0.7211,
+  "min_order_usd": 0.72,
+  "spread_bp": 11.1,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ZRO-USD_UM_XPERP-310822",
+  "vol24h_usd": 564480,
+  "last": 1.5419,
+  "min_order_usd": 1.54,
+  "spread_bp": 26.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "DOT-USD_UM_XPERP-310808",
+  "vol24h_usd": 525764,
+  "last": 1.1367,
+  "min_order_usd": 1.14,
+  "spread_bp": 5.27,
+  "kind": "crypto"
+ },
+ {
+  "instId": "NVDA-USD_UM_XPERP-310613",
+  "vol24h_usd": 515978,
+  "last": 224.27,
+  "min_order_usd": 2.24,
+  "spread_bp": 7.58,
+  "kind": "stock"
+ },
+ {
+  "instId": "MON-USD_UM_XPERP-310711",
+  "vol24h_usd": 478687,
+  "last": 0.02427,
+  "min_order_usd": 0.24,
+  "spread_bp": 8.23,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CRV-USD_UM_XPERP-310815",
+  "vol24h_usd": 453287,
+  "last": 0.337,
+  "min_order_usd": 0.34,
+  "spread_bp": 38.57,
+  "kind": "crypto"
+ },
+ {
+  "instId": "GRASS-USD_UM_XPERP-310829",
+  "vol24h_usd": 428369,
+  "last": 0.4472,
+  "min_order_usd": 0.45,
+  "spread_bp": 13.41,
+  "kind": "crypto"
+ },
+ {
+  "instId": "UB-USD_UM_XPERP-310627",
+  "vol24h_usd": 413597,
+  "last": 0.14375,
+  "min_order_usd": 14.37,
+  "spread_bp": 19.48,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ATOM-USD_UM_XPERP-310912",
+  "vol24h_usd": 407422,
+  "last": 1.705,
+  "min_order_usd": 1.71,
+  "spread_bp": 29.16,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ALGO-USD_UM_XPERP-310711",
+  "vol24h_usd": 396834,
+  "last": 0.1056,
+  "min_order_usd": 1.06,
+  "spread_bp": 41.59,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BMNR-USD_UM_XPERP-310822",
+  "vol24h_usd": 390132,
+  "last": 27.62,
+  "min_order_usd": 2.76,
+  "spread_bp": 115.98,
+  "kind": "stock"
+ },
+ {
+  "instId": "PYTH-USD_UM_XPERP-310829",
+  "vol24h_usd": 361478,
+  "last": 0.06462,
+  "min_order_usd": 0.65,
+  "spread_bp": 46.22,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AERO-USD_UM_XPERP-310912",
+  "vol24h_usd": 355219,
+  "last": 0.6848,
+  "min_order_usd": 6.85,
+  "spread_bp": 14.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "POL-USD_UM_XPERP-310829",
+  "vol24h_usd": 350654,
+  "last": 0.10239,
+  "min_order_usd": 1.02,
+  "spread_bp": 30.3,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CAP-USD_UM_XPERP-310704",
+  "vol24h_usd": 340125,
+  "last": 0.04972,
+  "min_order_usd": 4.97,
+  "spread_bp": 20.11,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SKHY-USD_UM_XPERP-310822",
+  "vol24h_usd": 289913,
+  "last": 186.08,
+  "min_order_usd": 1.86,
+  "spread_bp": 103.09,
+  "kind": "stock"
+ },
+ {
+  "instId": "WIF-USD_UM_XPERP-310815",
+  "vol24h_usd": 286464,
+  "last": 0.2395,
+  "min_order_usd": 0.24,
+  "spread_bp": 54.4,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CRWV-USD_UM_XPERP-310822",
+  "vol24h_usd": 275544,
+  "last": 86.0,
+  "min_order_usd": 0.86,
+  "spread_bp": 18.59,
+  "kind": "stock"
+ },
+ {
+  "instId": "GOOGL-USD_UM_XPERP-310613",
+  "vol24h_usd": 275523,
+  "last": 339.11,
+  "min_order_usd": 3.39,
+  "spread_bp": 6.79,
+  "kind": "stock"
+ },
+ {
+  "instId": "SEI-USD_UM_XPERP-310926",
+  "vol24h_usd": 264213,
+  "last": 0.0594,
+  "min_order_usd": 0.59,
+  "spread_bp": 40.44,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ETHFI-USD_UM_XPERP-310822",
+  "vol24h_usd": 243965,
+  "last": 0.6735,
+  "min_order_usd": 0.67,
+  "spread_bp": 14.86,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CP-USD_UM_XPERP-310905",
+  "vol24h_usd": 243858,
+  "last": 0.01273,
+  "min_order_usd": 1.27,
+  "spread_bp": 15.71,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AAOI-USD_UM_XPERP-310711",
+  "vol24h_usd": 232750,
+  "last": 100.28,
+  "min_order_usd": 1.0,
+  "spread_bp": 12.98,
+  "kind": "stock"
+ },
+ {
+  "instId": "UP-USD_UM_XPERP-310919",
+  "vol24h_usd": 229876,
+  "last": 0.329,
+  "min_order_usd": 3.29,
+  "spread_bp": 141.3,
+  "kind": "crypto"
+ },
+ {
+  "instId": "JTO-USD_UM_XPERP-310725",
+  "vol24h_usd": 228790,
+  "last": 0.4662,
+  "min_order_usd": 0.47,
+  "spread_bp": 21.43,
+  "kind": "crypto"
+ },
+ {
+  "instId": "TIA-USD_UM_XPERP-310905",
+  "vol24h_usd": 215258,
+  "last": 0.476,
+  "min_order_usd": 0.48,
+  "spread_bp": 44.14,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SPY-USD_UM_XPERP-310613",
+  "vol24h_usd": 208733,
+  "last": 765.71,
+  "min_order_usd": 7.66,
+  "spread_bp": 10.45,
+  "kind": "stock"
+ },
+ {
+  "instId": "ANTHROPIC-USD_UM_XPERP-310912",
+  "vol24h_usd": 198518,
+  "last": 215.78,
+  "min_order_usd": 0.22,
+  "spread_bp": 7.41,
+  "kind": "stock"
+ },
+ {
+  "instId": "QQQ-USD_UM_XPERP-310613",
+  "vol24h_usd": 192519,
+  "last": 737.0,
+  "min_order_usd": 7.37,
+  "spread_bp": 3.26,
+  "kind": "stock"
+ },
+ {
+  "instId": "CHIP-USD_UM_XPERP-310822",
+  "vol24h_usd": 192067,
+  "last": 0.04275,
+  "min_order_usd": 4.28,
+  "spread_bp": 23.4,
+  "kind": "crypto"
+ },
+ {
+  "instId": "TSLA-USD_UM_XPERP-310613",
+  "vol24h_usd": 190123,
+  "last": 379.51,
+  "min_order_usd": 3.8,
+  "spread_bp": 5.01,
+  "kind": "stock"
+ },
+ {
+  "instId": "KAITO-USD_UM_XPERP-310725",
+  "vol24h_usd": 185754,
+  "last": 0.3412,
+  "min_order_usd": 0.34,
+  "spread_bp": 20.56,
+  "kind": "crypto"
+ },
+ {
+  "instId": "META-USD_UM_XPERP-310613",
+  "vol24h_usd": 181373,
+  "last": 737.83,
+  "min_order_usd": 7.38,
+  "spread_bp": 21.28,
+  "kind": "stock"
+ },
+ {
+  "instId": "SNXX-USD_UM_XPERP-310822",
+  "vol24h_usd": 175576,
+  "last": 17.66,
+  "min_order_usd": 1.77,
+  "spread_bp": 50.95,
+  "kind": "stock"
+ },
+ {
+  "instId": "AMZN-USD_UM_XPERP-310613",
+  "vol24h_usd": 168818,
+  "last": 248.2,
+  "min_order_usd": 2.48,
+  "spread_bp": 8.06,
+  "kind": "stock"
+ },
+ {
+  "instId": "LDO-USD_UM_XPERP-310822",
+  "vol24h_usd": 168772,
+  "last": 0.3985,
+  "min_order_usd": 0.4,
+  "spread_bp": 12.54,
+  "kind": "crypto"
+ },
+ {
+  "instId": "OPENAI-USD_UM_XPERP-310905",
+  "vol24h_usd": 167247,
+  "last": 164.29,
+  "min_order_usd": 1.64,
+  "spread_bp": 2.43,
+  "kind": "stock"
+ },
+ {
+  "instId": "MORPHO-USD_UM_XPERP-310905",
+  "vol24h_usd": 151748,
+  "last": 2.7342,
+  "min_order_usd": 2.73,
+  "spread_bp": 40.56,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RKLB-USD_UM_XPERP-310822",
+  "vol24h_usd": 149844,
+  "last": 69.63,
+  "min_order_usd": 0.7,
+  "spread_bp": 34.52,
+  "kind": "stock"
+ },
+ {
+  "instId": "GRVT-USD_UM_XPERP-310801",
+  "vol24h_usd": 149100,
+  "last": 0.19627,
+  "min_order_usd": 1.96,
+  "spread_bp": 18.33,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ZHIPU-USD_UM_XPERP-310926",
+  "vol24h_usd": 148412,
+  "last": 81.5,
+  "min_order_usd": 0.82,
+  "spread_bp": 224.8,
+  "kind": "stock"
+ },
+ {
+  "instId": "OP-USD_UM_XPERP-310815",
+  "vol24h_usd": 135519,
+  "last": 0.12535,
+  "min_order_usd": 0.13,
+  "spread_bp": 42.38,
+  "kind": "crypto"
+ },
+ {
+  "instId": "PLTR-USD_UM_XPERP-310801",
+  "vol24h_usd": 133714,
+  "last": 191.29,
+  "min_order_usd": 1.91,
+  "spread_bp": 26.17,
+  "kind": "stock"
+ },
+ {
+  "instId": "AMD-USD_UM_XPERP-310711",
+  "vol24h_usd": 125951,
+  "last": 608.46,
+  "min_order_usd": 6.08,
+  "spread_bp": 25.94,
+  "kind": "stock"
+ },
+ {
+  "instId": "WLFI-USD_UM_XPERP-310725",
+  "vol24h_usd": 122945,
+  "last": 0.05502,
+  "min_order_usd": 0.55,
+  "spread_bp": 36.42,
+  "kind": "crypto"
+ },
+ {
+  "instId": "TRX-USD_UM_XPERP-310523",
+  "vol24h_usd": 121121,
+  "last": 0.34311,
+  "min_order_usd": 3.43,
+  "spread_bp": 12.24,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BICO-USD_UM_XPERP-310704",
+  "vol24h_usd": 117274,
+  "last": 0.0224,
+  "min_order_usd": 0.02,
+  "spread_bp": 22.3,
+  "kind": "crypto"
+ },
+ {
+  "instId": "GALA-USD_UM_XPERP-310822",
+  "vol24h_usd": 115742,
+  "last": 0.002,
+  "min_order_usd": 0.02,
+  "spread_bp": 65.24,
+  "kind": "crypto"
+ },
+ {
+  "instId": "FLOCK-USD_UM_XPERP-310926",
+  "vol24h_usd": 112403,
+  "last": 0.07933,
+  "min_order_usd": 7.93,
+  "spread_bp": 71.96,
+  "kind": "crypto"
+ },
+ {
+  "instId": "APT-USD_UM_XPERP-310815",
+  "vol24h_usd": 111153,
+  "last": 0.7664,
+  "min_order_usd": 0.77,
+  "spread_bp": 32.48,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AEON-USD_UM_XPERP-310801",
+  "vol24h_usd": 107564,
+  "last": 0.06188,
+  "min_order_usd": 0.62,
+  "spread_bp": 68.06,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ETC-USD_UM_XPERP-310808",
+  "vol24h_usd": 99029,
+  "last": 9.434,
+  "min_order_usd": 0.94,
+  "spread_bp": 64.14,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SOFTBANK-USD_UM_XPERP-310704",
+  "vol24h_usd": 93473,
+  "last": 40.1,
+  "min_order_usd": 4.01,
+  "spread_bp": 281.76,
+  "kind": "stock"
+ },
+ {
+  "instId": "STRK-USD_UM_XPERP-310919",
+  "vol24h_usd": 92659,
+  "last": 0.03931,
+  "min_order_usd": 0.04,
+  "spread_bp": 38.26,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AXTI-USD_UM_XPERP-310822",
+  "vol24h_usd": 90935,
+  "last": 71.21,
+  "min_order_usd": 0.71,
+  "spread_bp": 140.43,
+  "kind": "stock"
+ },
+ {
+  "instId": "ZEN-USD_UM_XPERP-310912",
+  "vol24h_usd": 89821,
+  "last": 7.365,
+  "min_order_usd": 0.74,
+  "spread_bp": 72.34,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RLS-USD_UM_XPERP-310829",
+  "vol24h_usd": 88800,
+  "last": 0.002497,
+  "min_order_usd": 0.25,
+  "spread_bp": 44.06,
+  "kind": "crypto"
+ },
+ {
+  "instId": "H-USD_UM_XPERP-310815",
+  "vol24h_usd": 84795,
+  "last": 0.05756,
+  "min_order_usd": 0.58,
+  "spread_bp": 62.19,
+  "kind": "crypto"
+ },
+ {
+  "instId": "EDGE-USD_UM_XPERP-310822",
+  "vol24h_usd": 81515,
+  "last": 0.5773,
+  "min_order_usd": 5.77,
+  "spread_bp": 19.17,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CASHCAT-USD_UM_XPERP-310926",
+  "vol24h_usd": 79483,
+  "last": 0.1588,
+  "min_order_usd": 1.59,
+  "spread_bp": 138.02,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ORDI-USD_UM_XPERP-310815",
+  "vol24h_usd": 79239,
+  "last": 4.533,
+  "min_order_usd": 0.45,
+  "spread_bp": 13.25,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SHIB-USD_UM_XPERP-310801",
+  "vol24h_usd": 76557,
+  "last": 5.729e-06,
+  "min_order_usd": 5.73,
+  "spread_bp": 43.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SOPH-USD_UM_XPERP-310912",
+  "vol24h_usd": 74183,
+  "last": 0.003785,
+  "min_order_usd": 0.38,
+  "spread_bp": 70.52,
+  "kind": "crypto"
+ },
+ {
+  "instId": "MSFT-USD_UM_XPERP-310613",
+  "vol24h_usd": 66659,
+  "last": 498.57,
+  "min_order_usd": 4.99,
+  "spread_bp": 6.22,
+  "kind": "stock"
+ },
+ {
+  "instId": "ARX-USD_UM_XPERP-310627",
+  "vol24h_usd": 64797,
+  "last": 0.2386,
+  "min_order_usd": 2.39,
+  "spread_bp": 79.58,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CBRS-USD_UM_XPERP-310704",
+  "vol24h_usd": 64490,
+  "last": 202.8,
+  "min_order_usd": 2.03,
+  "spread_bp": 40.5,
+  "kind": "stock"
+ },
+ {
+  "instId": "AVGO-USD_UM_XPERP-310829",
+  "vol24h_usd": 63833,
+  "last": 352.67,
+  "min_order_usd": 3.53,
+  "spread_bp": 30.37,
+  "kind": "stock"
+ },
+ {
+  "instId": "COIN-USD_UM_XPERP-310801",
+  "vol24h_usd": 63831,
+  "last": 198.08,
+  "min_order_usd": 1.98,
+  "spread_bp": 14.14,
+  "kind": "stock"
+ },
+ {
+  "instId": "MRNA-USD_UM_XPERP-310905",
+  "vol24h_usd": 63717,
+  "last": 178.98,
+  "min_order_usd": 1.79,
+  "spread_bp": 130.73,
+  "kind": "stock"
+ },
+ {
+  "instId": "NIGHT-USD_UM_XPERP-310718",
+  "vol24h_usd": 63495,
+  "last": 0.023725,
+  "min_order_usd": 2.37,
+  "spread_bp": 64.04,
+  "kind": "crypto"
+ },
+ {
+  "instId": "KSM-USD_UM_XPERP-310919",
+  "vol24h_usd": 62796,
+  "last": 4.4,
+  "min_order_usd": 0.44,
+  "spread_bp": 65.18,
+  "kind": "crypto"
+ },
+ {
+  "instId": "MINA-USD_UM_XPERP-310926",
+  "vol24h_usd": 60291,
+  "last": 0.1463,
+  "min_order_usd": 0.15,
+  "spread_bp": 64.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AAPL-USD_UM_XPERP-310613",
+  "vol24h_usd": 59595,
+  "last": 336.39,
+  "min_order_usd": 3.36,
+  "spread_bp": 15.46,
+  "kind": "stock"
+ },
+ {
+  "instId": "MRVL-USD_UM_XPERP-310627",
+  "vol24h_usd": 59392,
+  "last": 256.0,
+  "min_order_usd": 2.56,
+  "spread_bp": 21.1,
+  "kind": "stock"
+ },
+ {
+  "instId": "CNPY-USD_UM_XPERP-310926",
+  "vol24h_usd": 59236,
+  "last": 0.4261,
+  "min_order_usd": 4.26,
+  "spread_bp": 91.11,
+  "kind": "crypto"
+ },
+ {
+  "instId": "CFX-USD_UM_XPERP-310926",
+  "vol24h_usd": 56919,
+  "last": 0.05216,
+  "min_order_usd": 0.52,
+  "spread_bp": 51.38,
+  "kind": "crypto"
+ },
+ {
+  "instId": "HOOD-USD_UM_XPERP-310801",
+  "vol24h_usd": 54900,
+  "last": 122.6,
+  "min_order_usd": 12.26,
+  "spread_bp": 31.84,
+  "kind": "stock"
+ },
+ {
+  "instId": "BASED-USD_UM_XPERP-310704",
+  "vol24h_usd": 49064,
+  "last": 0.06571,
+  "min_order_usd": 0.66,
+  "spread_bp": 15.24,
+  "kind": "crypto"
+ },
+ {
+  "instId": "KMNO-USD_UM_XPERP-310926",
+  "vol24h_usd": 48538,
+  "last": 0.03647,
+  "min_order_usd": 3.65,
+  "spread_bp": 54.67,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ACU-USD_UM_XPERP-310822",
+  "vol24h_usd": 48494,
+  "last": 0.1326,
+  "min_order_usd": 1.33,
+  "spread_bp": 77.67,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BE-USD_UM_XPERP-310829",
+  "vol24h_usd": 48436,
+  "last": 272.11,
+  "min_order_usd": 2.72,
+  "spread_bp": 60.27,
+  "kind": "stock"
+ },
+ {
+  "instId": "TRIA-USD_UM_XPERP-310905",
+  "vol24h_usd": 42608,
+  "last": 0.004282,
+  "min_order_usd": 0.43,
+  "spread_bp": 81.96,
+  "kind": "crypto"
+ },
+ {
+  "instId": "INTC-USD_UM_XPERP-310627",
+  "vol24h_usd": 42195,
+  "last": 121.25,
+  "min_order_usd": 12.12,
+  "spread_bp": 10.73,
+  "kind": "stock"
+ },
+ {
+  "instId": "DELL-USD_UM_XPERP-310822",
+  "vol24h_usd": 39605,
+  "last": 542.54,
+  "min_order_usd": 5.43,
+  "spread_bp": 113.65,
+  "kind": "stock"
+ },
+ {
+  "instId": "SOXS-USD_UM_XPERP-310912",
+  "vol24h_usd": 37775,
+  "last": 34.72,
+  "min_order_usd": 3.47,
+  "spread_bp": 132.15,
+  "kind": "stock"
+ },
+ {
+  "instId": "DOS-USD_UM_XPERP-310815",
+  "vol24h_usd": 37608,
+  "last": 0.2213,
+  "min_order_usd": 2.21,
+  "spread_bp": 58.86,
+  "kind": "crypto"
+ },
+ {
+  "instId": "KITE-USD_UM_XPERP-310905",
+  "vol24h_usd": 35123,
+  "last": 0.13113,
+  "min_order_usd": 1.31,
+  "spread_bp": 66.45,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ZIL-USD_UM_XPERP-310801",
+  "vol24h_usd": 34568,
+  "last": 0.003677,
+  "min_order_usd": 0.37,
+  "spread_bp": 60.08,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ORCL-USD_UM_XPERP-310912",
+  "vol24h_usd": 33327,
+  "last": 143.65,
+  "min_order_usd": 1.44,
+  "spread_bp": 20.17,
+  "kind": "stock"
+ },
+ {
+  "instId": "OKTA-USD_UM_XPERP-310829",
+  "vol24h_usd": 30861,
+  "last": 204.38,
+  "min_order_usd": 2.04,
+  "spread_bp": 215.99,
+  "kind": "stock"
+ },
+ {
+  "instId": "DRAM-USD_UM_XPERP-310627",
+  "vol24h_usd": 30373,
+  "last": 61.36,
+  "min_order_usd": 6.14,
+  "spread_bp": 21.21,
+  "kind": "stock"
+ },
+ {
+  "instId": "KORU-USD_UM_XPERP-310919",
+  "vol24h_usd": 28609,
+  "last": 20.99,
+  "min_order_usd": 0.21,
+  "spread_bp": 80.63,
+  "kind": "stock"
+ },
+ {
+  "instId": "AI-USD_UM_XPERP-310704",
+  "vol24h_usd": 27073,
+  "last": 0.01948,
+  "min_order_usd": 1.95,
+  "spread_bp": 64.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "PIEVERSE-USD_UM_XPERP-310822",
+  "vol24h_usd": 26088,
+  "last": 1.6606,
+  "min_order_usd": 16.61,
+  "spread_bp": 48.22,
+  "kind": "crypto"
+ },
+ {
+  "instId": "0G-USD_UM_XPERP-310905",
+  "vol24h_usd": 23971,
+  "last": 0.2546,
+  "min_order_usd": 0.25,
+  "spread_bp": 27.49,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RAVE-USD_UM_XPERP-310815",
+  "vol24h_usd": 22858,
+  "last": 0.1904,
+  "min_order_usd": 1.9,
+  "spread_bp": 62.28,
+  "kind": "crypto"
+ },
+ {
+  "instId": "IRYS-USD_UM_XPERP-310530",
+  "vol24h_usd": 22013,
+  "last": 0.01578,
+  "min_order_usd": 1.58,
+  "spread_bp": 57.02,
+  "kind": "crypto"
+ },
+ {
+  "instId": "STX-USD_UM_XPERP-310829",
+  "vol24h_usd": 21720,
+  "last": 0.3088,
+  "min_order_usd": 0.31,
+  "spread_bp": 55.08,
+  "kind": "crypto"
+ },
+ {
+  "instId": "NBIS-USD_UM_XPERP-310711",
+  "vol24h_usd": 20687,
+  "last": 227.33,
+  "min_order_usd": 2.27,
+  "spread_bp": 8.36,
+  "kind": "stock"
+ },
+ {
+  "instId": "MINIMAX-USD_UM_XPERP-310919",
+  "vol24h_usd": 19073,
+  "last": 35.65,
+  "min_order_usd": 3.56,
+  "spread_bp": 234.23,
+  "kind": "stock"
+ },
+ {
+  "instId": "SAMSUNG-USD_UM_XPERP-310704",
+  "vol24h_usd": 18926,
+  "last": 203.51,
+  "min_order_usd": 2.04,
+  "spread_bp": 73.85,
+  "kind": "stock"
+ },
+ {
+  "instId": "MOODENG-USD_UM_XPERP-310815",
+  "vol24h_usd": 18533,
+  "last": 0.04579,
+  "min_order_usd": 0.46,
+  "spread_bp": 58.89,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ARM-USD_UM_XPERP-310822",
+  "vol24h_usd": 18172,
+  "last": 324.5,
+  "min_order_usd": 3.25,
+  "spread_bp": 92.14,
+  "kind": "stock"
+ },
+ {
+  "instId": "DYDX-USD_UM_XPERP-310822",
+  "vol24h_usd": 17696,
+  "last": 0.12966,
+  "min_order_usd": 0.13,
+  "spread_bp": 50.82,
+  "kind": "crypto"
+ },
+ {
+  "instId": "PROS-USD_UM_XPERP-310801",
+  "vol24h_usd": 16145,
+  "last": 0.5591,
+  "min_order_usd": 0.56,
+  "spread_bp": 96.39,
+  "kind": "crypto"
+ },
+ {
+  "instId": "HOME-USD_UM_XPERP-310808",
+  "vol24h_usd": 15947,
+  "last": 0.006307,
+  "min_order_usd": 0.63,
+  "spread_bp": 61.21,
+  "kind": "crypto"
+ },
+ {
+  "instId": "LITE-USD_UM_XPERP-310815",
+  "vol24h_usd": 15770,
+  "last": 927.67,
+  "min_order_usd": 9.28,
+  "spread_bp": 22.77,
+  "kind": "stock"
+ },
+ {
+  "instId": "BILL-USD_UM_XPERP-310718",
+  "vol24h_usd": 15022,
+  "last": 0.01246,
+  "min_order_usd": 1.25,
+  "spread_bp": 87.41,
+  "kind": "crypto"
+ },
+ {
+  "instId": "USAR-USD_UM_XPERP-310926",
+  "vol24h_usd": 14204,
+  "last": 15.8,
+  "min_order_usd": 1.58,
+  "spread_bp": 95.09,
+  "kind": "stock"
+ },
+ {
+  "instId": "IOST-USD_UM_XPERP-310919",
+  "vol24h_usd": 13524,
+  "last": 0.0009236,
+  "min_order_usd": 0.92,
+  "spread_bp": 45.56,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SUSHI-USD_UM_XPERP-310912",
+  "vol24h_usd": 12341,
+  "last": 0.2509,
+  "min_order_usd": 0.25,
+  "spread_bp": 55.6,
+  "kind": "crypto"
+ },
+ {
+  "instId": "BSB-USD_UM_XPERP-310718",
+  "vol24h_usd": 12002,
+  "last": 0.10548,
+  "min_order_usd": 1.05,
+  "spread_bp": 69.03,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SPK-USD_UM_XPERP-310829",
+  "vol24h_usd": 11463,
+  "last": 0.01998,
+  "min_order_usd": 2.0,
+  "spread_bp": 58.39,
+  "kind": "crypto"
+ },
+ {
+  "instId": "O-USD_UM_XPERP-310620",
+  "vol24h_usd": 11297,
+  "last": 0.5382,
+  "min_order_usd": 5.38,
+  "spread_bp": 62.32,
+  "kind": "crypto"
+ },
+ {
+  "instId": "QCOM-USD_UM_XPERP-310801",
+  "vol24h_usd": 10499,
+  "last": 196.95,
+  "min_order_usd": 1.97,
+  "spread_bp": 131.44,
+  "kind": "stock"
+ },
+ {
+  "instId": "IREN-USD_UM_XPERP-310926",
+  "vol24h_usd": 9862,
+  "last": 45.87,
+  "min_order_usd": 4.59,
+  "spread_bp": 115.56,
+  "kind": "stock"
+ },
+ {
+  "instId": "WDC-USD_UM_XPERP-310829",
+  "vol24h_usd": 9761,
+  "last": 464.79,
+  "min_order_usd": 4.65,
+  "spread_bp": 149.78,
+  "kind": "stock"
+ },
+ {
+  "instId": "ACT-USD_UM_XPERP-310704",
+  "vol24h_usd": 9524,
+  "last": 0.01088,
+  "min_order_usd": 0.01,
+  "spread_bp": 54.24,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SLX-USD_UM_XPERP-310606",
+  "vol24h_usd": 9453,
+  "last": 0.07069,
+  "min_order_usd": 0.71,
+  "spread_bp": 42.49,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ESP-USD_UM_XPERP-310801",
+  "vol24h_usd": 9193,
+  "last": 0.09546,
+  "min_order_usd": 9.55,
+  "spread_bp": 59.9,
+  "kind": "crypto"
+ },
+ {
+  "instId": "OL-USD_UM_XPERP-310912",
+  "vol24h_usd": 8861,
+  "last": 0.006886,
+  "min_order_usd": 0.69,
+  "spread_bp": 144.57,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ENSO-USD_UM_XPERP-310822",
+  "vol24h_usd": 8465,
+  "last": 0.9895,
+  "min_order_usd": 0.99,
+  "spread_bp": 52.35,
+  "kind": "crypto"
+ },
+ {
+  "instId": "RESOLV-USD_UM_XPERP-310704",
+  "vol24h_usd": 7143,
+  "last": 0.01815,
+  "min_order_usd": 0.18,
+  "spread_bp": 49.85,
+  "kind": "crypto"
+ },
+ {
+  "instId": "MUU-USD_UM_XPERP-310926",
+  "vol24h_usd": 6985,
+  "last": 36.38,
+  "min_order_usd": 0.36,
+  "spread_bp": 63.23,
+  "kind": "stock"
+ },
+ {
+  "instId": "TRB-USD_UM_XPERP-310815",
+  "vol24h_usd": 6322,
+  "last": 18.71,
+  "min_order_usd": 1.87,
+  "spread_bp": 51.76,
+  "kind": "crypto"
+ },
+ {
+  "instId": "EWY-USD_UM_XPERP-310704",
+  "vol24h_usd": 6297,
+  "last": 185.2,
+  "min_order_usd": 1.85,
+  "spread_bp": 63.71,
+  "kind": "stock"
+ },
+ {
+  "instId": "CRDO-USD_UM_XPERP-310926",
+  "vol24h_usd": 5941,
+  "last": 191.64,
+  "min_order_usd": 1.92,
+  "spread_bp": 218.14,
+  "kind": "stock"
+ },
+ {
+  "instId": "NES-USD_UM_XPERP-310627",
+  "vol24h_usd": 5866,
+  "last": 0.1686,
+  "min_order_usd": 1.69,
+  "spread_bp": 100.56,
+  "kind": "crypto"
+ },
+ {
+  "instId": "DGAI-USD_UM_XPERP-310919",
+  "vol24h_usd": 5637,
+  "last": 1.0286,
+  "min_order_usd": 10.29,
+  "spread_bp": 145.36,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ZKP-USD_UM_XPERP-310905",
+  "vol24h_usd": 5630,
+  "last": 0.04785,
+  "min_order_usd": 0.48,
+  "spread_bp": 73.33,
+  "kind": "crypto"
+ },
+ {
+  "instId": "APR-USD_UM_XPERP-310815",
+  "vol24h_usd": 4803,
+  "last": 0.1486,
+  "min_order_usd": 1.49,
+  "spread_bp": 79.79,
+  "kind": "crypto"
+ },
+ {
+  "instId": "AVNT-USD_UM_XPERP-310815",
+  "vol24h_usd": 4736,
+  "last": 0.11321,
+  "min_order_usd": 0.11,
+  "spread_bp": 56.61,
+  "kind": "crypto"
+ },
+ {
+  "instId": "SAHARA-USD_UM_XPERP-310912",
+  "vol24h_usd": 3034,
+  "last": 0.00939,
+  "min_order_usd": 0.09,
+  "spread_bp": 67.26,
+  "kind": "crypto"
+ },
+ {
+  "instId": "KO-USD_UM_XPERP-310912",
+  "vol24h_usd": 2984,
+  "last": 87.76,
+  "min_order_usd": 8.78,
+  "spread_bp": 212.89,
+  "kind": "stock"
+ },
+ {
+  "instId": "AGLD-USD_UM_XPERP-310926",
+  "vol24h_usd": 2821,
+  "last": 0.2084,
+  "min_order_usd": 0.21,
+  "spread_bp": 71.89,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ROBO-USD_UM_XPERP-310815",
+  "vol24h_usd": 2705,
+  "last": 0.009546,
+  "min_order_usd": 0.95,
+  "spread_bp": 66.97,
+  "kind": "crypto"
+ },
+ {
+  "instId": "XIAOMI-USD_UM_XPERP-310919",
+  "vol24h_usd": 2494,
+  "last": 3.37,
+  "min_order_usd": 3.37,
+  "spread_bp": 265.1,
+  "kind": "stock"
+ },
+ {
+  "instId": "TSM-USD_UM_XPERP-310926",
+  "vol24h_usd": 2222,
+  "last": 444.35,
+  "min_order_usd": 4.44,
+  "spread_bp": 213.33,
+  "kind": "stock"
+ },
+ {
+  "instId": "COHR-USD_UM_XPERP-310919",
+  "vol24h_usd": 2089,
+  "last": 298.43,
+  "min_order_usd": 2.98,
+  "spread_bp": 180.67,
+  "kind": "stock"
+ },
+ {
+  "instId": "AMAT-USD_UM_XPERP-310926",
+  "vol24h_usd": 1885,
+  "last": 471.26,
+  "min_order_usd": 4.71,
+  "spread_bp": 231.03,
+  "kind": "stock"
+ },
+ {
+  "instId": "BIO-USD_UM_XPERP-310808",
+  "vol24h_usd": 993,
+  "last": 0.02957,
+  "min_order_usd": 0.03,
+  "spread_bp": 50.46,
+  "kind": "crypto"
+ },
+ {
+  "instId": "ONT-USD_UM_XPERP-310829",
+  "vol24h_usd": 758,
+  "last": 0.05631,
+  "min_order_usd": 0.56,
+  "spread_bp": 57.19,
+  "kind": "crypto"
+ },
+ {
+  "instId": "OPN-USD_UM_XPERP-310822",
+  "vol24h_usd": 602,
+  "last": 0.04985,
+  "min_order_usd": 0.5,
+  "spread_bp": 59.32,
+  "kind": "crypto"
+ },
+ {
+  "instId": "FLNC-USD_UM_XPERP-310919",
+  "vol24h_usd": 385,
+  "last": 7.545,
+  "min_order_usd": 0.75,
+  "spread_bp": 227.95,
+  "kind": "stock"
+ },
+ {
+  "instId": "NOT-USD_UM_XPERP-310905",
+  "vol24h_usd": 272,
+  "last": 0.000474,
+  "min_order_usd": 0.05,
+  "spread_bp": 55.03,
+  "kind": "crypto"
+ },
+ {
+  "instId": "GLW-USD_UM_XPERP-310926",
+  "vol24h_usd": 160,
+  "last": 160.26,
+  "min_order_usd": 1.6,
+  "spread_bp": 219.36,
+  "kind": "stock"
+ },
+ {
+  "instId": "YB-USD_UM_XPERP-310829",
+  "vol24h_usd": 0,
+  "last": 0.09345,
+  "min_order_usd": 0.09,
+  "spread_bp": 85.67,
+  "kind": "crypto"
+ },
+ {
+  "instId": "TEST002-USD_UM_XPERP-310822",
+  "vol24h_usd": 0,
+  "last": 0.0,
+  "min_order_usd": 0.0,
+  "spread_bp": 264.32,
+  "kind": "test"
+ }
+]

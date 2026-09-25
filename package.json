@@ -1,0 +1,48 @@
+{
+  "name": "beebots",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Three AI trading bees on OKX EEA X-Perps, every decision made by Jev",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "packageManager": "pnpm@10.34.5",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ],
+    "ignoredBuiltDependencies": [
+      "@okx_ai/okx-trade-cli"
+    ]
+  },
+  "scripts": {
+    "dev": "DB_PATH=./data/bees-{mode}.sqlite tsx --env-file-if-exists=.env src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "universe": "tsx src/tools/universe.ts",
+    "snapshot": "tsx src/tools/snapshot.ts",
+    "e2e:fake-jev": "tsx test/e2e-dry.harness.ts",
+    "jev:check": "tsx --env-file-if-exists=.env src/tools/jev-check.ts",
+    "keycheck": "tsx --env-file-if-exists=.env src/tools/keycheck.ts",
+    "demo:roundtrip": "tsx --env-file-if-exists=.env src/tools/demo-roundtrip.ts",
+    "demo:close": "tsx --env-file-if-exists=.env src/tools/demo-close.ts"
+  },
+  "dependencies": {
+    "@okx_ai/okx-trade-cli": "1.4.8",
+    "@typesafe-ai/sdk": "0.6.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@types/node": "^22.15.0",
+    "eslint": "^9.30.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.2.0"
+  }
+}

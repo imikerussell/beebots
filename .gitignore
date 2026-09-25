@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+data/
+*.sqlite
+*.sqlite-*
+.DS_Store
+.gstack/

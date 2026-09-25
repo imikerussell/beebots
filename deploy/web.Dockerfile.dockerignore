@@ -1,0 +1,9 @@
+*
+!Caddyfile
+!dashboard/package.json
+!dashboard/pnpm-lock.yaml
+!dashboard/index.html
+!dashboard/vite.config.ts
+!dashboard/tsconfig.json
+!dashboard/src
+!dashboard/public

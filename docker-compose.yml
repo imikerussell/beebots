@@ -1,0 +1,114 @@
+# beebots: three AI trading bees on one small VPS. Paper trading unless you deliberately change it.
+#
+#   docker compose up -d        then open http://<your-server-ip>/ and follow Setup
+#   docker compose logs engine  shows what the engine is doing (Setup is open for 2 hours after it starts)
+#
+# The images are built from this repo by GitHub Actions. To build them yourself instead:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Settings: most people need none (Setup asks for your keys). Anything below can be set in a .env file next to this
+# one, or in Hostinger Docker Manager's environment variables. See .env.example for the full list.
+name: beebots
+
+services:
+  engine:
+    image: ghcr.io/imikerussell/beebots-engine:latest
+    restart: always
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    # Every setting in .env.example reaches the engine through this file, if you create it. Optional.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Paper trading by default. Real money needs DRY_RUN=false, MODE=live, per-bee OKX keys and LIVE_ACK (see README).
+      DRY_RUN: ${DRY_RUN:-true}
+      MODE: ${MODE:-dry}
+      LIVE_ACK: ${LIVE_ACK:-}
+      # Optional here: Setup asks for them and stores them in the data volume.
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # How often each bee asks Jev, and the hard daily cap on Jev spend in USD (see docs/COSTS.md).
+      TICK_MS: ${TICK_MS:-10000}
+      JEV_DAILY_USD_CAP: ${JEV_DAILY_USD_CAP:-2}
+      BEE_START_EQUITY_USD: ${BEE_START_EQUITY_USD:-333}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      # Setup stays open this many minutes after the engine starts; after that, restart the engine to open it again.
+      SETUP_WINDOW_MIN: ${SETUP_WINDOW_MIN:-120}
+      # Only if your Setup file has no owner password (older installs, or keys set only here): gates the dashboard's
+      # Join/Leave the Hive. At least 8 characters.
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-}
+      # "Update available" on the dashboard when a newer release is out (checks GitHub; never installs anything).
+      UPDATE_CHECK: ${UPDATE_CHECK:-true}
+      # The Hive, the public paper-trading leaderboard. Only used if you join (Setup or the dashboard).
+      HIVE_URL: ${HIVE_URL:-https://beebots.tech}
+      # Per-bee OKX keys, for demo or live only (letters: BEE1, BEE2, BEE3).
+      BEE1_OKX_DEMO_API_KEY: ${BEE1_OKX_DEMO_API_KEY:-}
+      BEE1_OKX_DEMO_API_SECRET: ${BEE1_OKX_DEMO_API_SECRET:-}
+      BEE1_OKX_DEMO_API_PASSPHRASE: ${BEE1_OKX_DEMO_API_PASSPHRASE:-}
+      BEE2_OKX_DEMO_API_KEY: ${BEE2_OKX_DEMO_API_KEY:-}
+      BEE2_OKX_DEMO_API_SECRET: ${BEE2_OKX_DEMO_API_SECRET:-}
+      BEE2_OKX_DEMO_API_PASSPHRASE: ${BEE2_OKX_DEMO_API_PASSPHRASE:-}
+      BEE3_OKX_DEMO_API_KEY: ${BEE3_OKX_DEMO_API_KEY:-}
+      BEE3_OKX_DEMO_API_SECRET: ${BEE3_OKX_DEMO_API_SECRET:-}
+      BEE3_OKX_DEMO_API_PASSPHRASE: ${BEE3_OKX_DEMO_API_PASSPHRASE:-}
+      BEE1_OKX_API_KEY: ${BEE1_OKX_API_KEY:-}
+      BEE1_OKX_API_SECRET: ${BEE1_OKX_API_SECRET:-}
+      BEE1_OKX_API_PASSPHRASE: ${BEE1_OKX_API_PASSPHRASE:-}
+      BEE2_OKX_API_KEY: ${BEE2_OKX_API_KEY:-}
+      BEE2_OKX_API_SECRET: ${BEE2_OKX_API_SECRET:-}
+      BEE2_OKX_API_PASSPHRASE: ${BEE2_OKX_API_PASSPHRASE:-}
+      BEE3_OKX_API_KEY: ${BEE3_OKX_API_KEY:-}
+      BEE3_OKX_API_SECRET: ${BEE3_OKX_API_SECRET:-}
+      BEE3_OKX_API_PASSPHRASE: ${BEE3_OKX_API_PASSPHRASE:-}
+      # Inside the compose network only; the port is never published. Caddy is the only way in.
+      ENGINE_BIND: 0.0.0.0
+      ENGINE_PORT: "8080"
+      DB_PATH: /data/bees-{mode}.sqlite
+      SETTINGS_PATH: /data/settings.json
+    volumes:
+      - bees-data:/data
+    expose:
+      - "8080"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  web:
+    image: ghcr.io/imikerussell/beebots-web:latest
+    restart: always
+    depends_on: [engine]
+    # Non-root Caddy with every capability dropped; the namespaced sysctl lets it bind 80/443.
+    user: "1000:1000"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Blank = plain HTTP on the server's IP. Set a domain that points at this server to get automatic HTTPS.
+      SITE_ADDRESS: ${PUBLIC_DOMAIN:-:80}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Nightly consistent SQLite backup into the same volume (/data/backups); keeps 7 days.
+  backup:
+    image: ghcr.io/imikerussell/beebots-backup:latest
+    restart: always
+    depends_on: [engine]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    volumes:
+      - bees-data:/data
+
+volumes:
+  bees-data:
+  caddy-data:
+  caddy-config:

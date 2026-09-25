@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>beebots</title>
+  <!-- honeycomb cell -->
+  <path d="M32 3.5 56.7 17.75v28.5L32 60.5 7.3 46.25v-28.5z" fill="#15141c" stroke="#c98500" stroke-width="3.5" stroke-linejoin="round"/>
+  <!-- wings -->
+  <ellipse cx="23.5" cy="23" rx="8" ry="6" transform="rotate(-28 23.5 23)" fill="#9085e9" fill-opacity=".85"/>
+  <ellipse cx="40.5" cy="23" rx="8" ry="6" transform="rotate(28 40.5 23)" fill="#9085e9" fill-opacity=".85"/>
+  <!-- body -->
+  <ellipse cx="32" cy="37" rx="11" ry="13" fill="#f5b400"/>
+  <path d="M21.4 33.5h21.2M21 40.5h22" stroke="#15141c" stroke-width="4.2" stroke-linecap="round"/>
+  <!-- eyes -->
+  <circle cx="28" cy="28.5" r="1.9" fill="#15141c"/>
+  <circle cx="36" cy="28.5" r="1.9" fill="#15141c"/>
+</svg>

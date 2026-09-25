@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+node_modules
+dist
+data
+*.sqlite*
+.DS_Store
+.git
+.github
+docs
+test
+strategies
+dashboard
+!dashboard/public/bees
