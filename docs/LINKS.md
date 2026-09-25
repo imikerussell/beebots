@@ -20,7 +20,7 @@
 - Modules: [market](https://github.com/okx/agent-trade-kit/blob/github-main/docs/modules/market.md) (no key) · [futures](https://github.com/okx/agent-trade-kit/blob/github-main/docs/modules/futures.md) (X-Perps are FUTURES) · [account](https://github.com/okx/agent-trade-kit/blob/github-main/docs/modules/account.md) · [news](https://github.com/okx/agent-trade-kit/blob/github-main/docs/modules/news.md)
 - https://github.com/okx/agent-trade-kit/tree/github-main/skills: agent skills (okx-cex-market, -trade, -portfolio...).
 - https://github.com/okx/agent-skills: separate OKX skills repo.
-- npm: `@okx_ai/okx-trade-cli` (binary `okx`) and `@okx_ai/okx-trade-mcp`, both 1.4.8 (2026-09-23). **No importable core library**, so the engine shells out to the CLI.md §3.1.
+- npm: `@okx_ai/okx-trade-cli` (binary `okx`) and `@okx_ai/okx-trade-mcp`, both 1.4.8 (2026-09-23). **No importable core library**, so the engine shells out to the CLI for signed calls and runs public market data on a vendored copy of the kit's REST client (`src/okx/kit/`).md §3.1.
 
 ## OKX API v5, EEA edition
 - https://my.okx.com/docs-v5/en/: EEA docs. REST `https://eea.okx.com`; WS `wss://wseea.okx.com:8443/ws/v5/{public,private,business}`; demo WS `wss://wseeapap.okx.com:8443/ws/v5/...`.

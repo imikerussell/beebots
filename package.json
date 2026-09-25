@@ -25,6 +25,7 @@
     "test": "vitest run",
     "universe": "tsx src/tools/universe.ts",
     "snapshot": "tsx src/tools/snapshot.ts",
+    "parity": "tsx src/tools/parity-market.ts",
     "e2e:fake-jev": "tsx test/e2e-dry.harness.ts",
     "jev:check": "tsx --env-file-if-exists=.env src/tools/jev-check.ts",
     "keycheck": "tsx --env-file-if-exists=.env src/tools/keycheck.ts",

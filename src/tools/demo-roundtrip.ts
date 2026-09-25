@@ -19,7 +19,7 @@ for (const b of BEES) {
 }
 
 const cli = createOkxCli({ site: "eea", timeoutMs: 15_000, maxConcurrent: 2 });
-const api = createPublicApi(cli, "https://eea.okx.com", true); // demo market: its own ids
+const api = createPublicApi("https://eea.okx.com", true); // demo market: its own ids
 const inst = (await api.instruments()).find((i) => i.coin === COIN && i.state === "live");
 if (!inst) throw new Error(`no live ${COIN} X-Perp`);
 const tick = (await api.tickers()).get(inst.instId)!;

@@ -15,6 +15,7 @@ import { MarketFeed } from "./market/data.js";
 import { createOkxCli } from "./okx/cli.js";
 import { createNewsSource } from "./okx/news.js";
 import { createPublicApi } from "./okx/public.js";
+import { createOkxPublicRest } from "./okx/rest.js";
 import { safeError } from "./redact.js";
 import { startServer } from "./server.js";
 import { loadSettings, STYLE_INFO } from "./settings.js";
@@ -92,7 +93,9 @@ async function main() {
   const bus = new EventBus(db);
   const alerts = new Alerts(cfg.alertWebhookUrl);
   const cli = createOkxCli({ site: cfg.okx.site, timeoutMs: cfg.okx.cliTimeoutMs });
-  const api = createPublicApi(cli, cfg.okx.apiBase, cfg.mode === "demo");
+  // Public market data runs in-process on the kit's REST client; the CLI (one child process per call) is kept for
+  // the signed per-bee calls only.
+  const api = createPublicApi(cfg.okx.apiBase, cfg.mode === "demo", createOkxPublicRest({ apiBase: cfg.okx.apiBase, timeoutMs: cfg.okx.cliTimeoutMs }));
   const demo = cfg.mode === "demo";
 
   let engine: Engine | null = null;

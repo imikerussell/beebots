@@ -1,6 +1,6 @@
 import { kindOf } from "../market/kinds.js";
 import type { Candle, FundingNow, Instrument, Ticker } from "../market/types.js";
-import { OkxCliError, type OkxCli } from "./cli.js";
+import { createOkxPublicRest, type OkxPublicRest } from "./rest.js";
 
 const XPERP = "_UM_XPERP-";
 const num = (v: unknown) => (v === undefined || v === null || v === "" ? NaN : Number(v));
@@ -65,47 +65,49 @@ export function parseCandles(rows: string[][]): Candle[] {
 }
 
 /**
+ * Freshness of the shared cache per call. Every value is shorter than the engine's cadence for that call (tickers every
+ * TICK_MS >= 1 s, the rest every DATA_REFRESH_MS >= 15 s), so each engine cycle still reads fresh data; the cache only
+ * merges identical requests that land together (e.g. the tick's and the refresh's tickers, or two tools at once).
+ */
+export const PUBLIC_TTL_MS = { tickers: 900, candles: 10_000, instruments: 10_000, openInterest: 5_000, funding: 10_000 } as const;
+
+/**
+ * Public OKX market data, in-process through the kit's public REST client (okx/rest.ts), no child processes.
  * `demo`: read OKX's demo market instead of live. Demo lists its own, smaller set of X-Perps with different
  * expiry suffixes (e.g. BTC ...-310328 in demo vs ...-310404 live), so in MODE=demo the whole feed must come from it.
+ * Pass `rest` to share one client (cache, rate-limit buckets) between several feeds.
  */
-export function createPublicApi(cli: OkxCli, apiBase: string, demo = false): PublicApi {
-  const run = <T>(args: string[]) => cli.run<T>({ args, demo });
-  // Public REST GET, used only where the kit CLI refuses X-Perp ids (funding-rate).
-  // GET, never HEAD (hard rule 7). No auth headers, no keys.
-  async function restGet<T>(path: string): Promise<T> {
-    const res = await fetch(`${apiBase}${path}`, { method: "GET", headers: demo ? { "x-simulated-trading": "1" } : {}, signal: AbortSignal.timeout(8000) });
-    const body = (await res.json()) as { code: string; msg: string; data: T };
-    if (body.code !== "0") throw new OkxCliError(body.code, body.msg);
-    return body.data;
-  }
+export function createPublicApi(apiBase: string, demo = false, rest: OkxPublicRest = createOkxPublicRest({ apiBase, timeoutMs: 15_000 })): PublicApi {
+  const get = <T>(path: string, query: Record<string, string | number>, ttlMs: number) => rest.get<T>(path, query, { ttlMs, demo });
 
   return {
     async instruments() {
-      const rows = await run<Row[]>(["market", "instruments", "--instType", "FUTURES"]);
+      const rows = await get<Row[]>("/api/v5/public/instruments", { instType: "FUTURES" }, PUBLIC_TTL_MS.instruments);
       return rows.filter((r) => r.instId?.includes(XPERP)).map(parseInstrument);
     },
     async tickers() {
-      const rows = await run<Row[]>(["market", "tickers", "FUTURES"]);
+      const rows = await get<Row[]>("/api/v5/market/tickers", { instType: "FUTURES" }, PUBLIC_TTL_MS.tickers);
       const out = new Map<string, Ticker>();
       for (const r of rows) if (r.instId?.includes(XPERP)) out.set(r.instId, parseTicker(r));
       return out;
     },
     async candles(instId, bar, limit) {
-      const rows = await run<string[][]>(["market", "candles", instId, "--bar", bar, "--limit", String(limit)]);
+      const rows = await get<string[][]>("/api/v5/market/candles", { instId, bar, limit }, PUBLIC_TTL_MS.candles);
       return parseCandles(rows);
     },
     async openInterest() {
-      const rows = await run<Row[]>(["market", "open-interest", "--instType", "FUTURES"]);
+      const rows = await get<Row[]>("/api/v5/public/open-interest", { instType: "FUTURES" }, PUBLIC_TTL_MS.openInterest);
       const out = new Map<string, number>();
       for (const r of rows) if (r.instId?.includes(XPERP)) out.set(r.instId, num(r.oiUsd));
       return out;
     },
     async funding(instId) {
-      const [r] = await restGet<Row[]>(`/api/v5/public/funding-rate?instId=${encodeURIComponent(instId)}`);
+      // The kit CLI refuses X-Perp ids for funding-rate (it wants -SWAP), so this was always a direct GET.
+      const [r] = await get<Row[]>("/api/v5/public/funding-rate", { instId }, PUBLIC_TTL_MS.funding);
       return { rate: num(r?.fundingRate), nextFundingTime: num(r?.fundingTime) };
     },
     async fundingHistory(instId, limit) {
-      const rows = await restGet<Row[]>(`/api/v5/public/funding-rate-history?instId=${encodeURIComponent(instId)}&limit=${limit}`);
+      const rows = await get<Row[]>("/api/v5/public/funding-rate-history", { instId, limit }, PUBLIC_TTL_MS.funding);
       return rows.map((r) => num(r.realizedRate ?? r.fundingRate)).filter(Number.isFinite);
     },
   };

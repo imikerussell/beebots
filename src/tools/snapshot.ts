@@ -5,14 +5,12 @@ import { BRAINS } from "../bees/index.js";
 import { loadConfig, STYLES as BEES, type BeeId } from "../config.js";
 import { freshBee } from "../ledger.js";
 import { MarketFeed } from "../market/data.js";
-import { createOkxCli } from "../okx/cli.js";
 import { createPublicApi } from "../okx/public.js";
 import { buildSnapshot } from "../snapshot.js";
 
 const cfg = loadConfig({ ...process.env, TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY || "unused", DRY_RUN: "true" });
-const cli = createOkxCli({ site: "eea", timeoutMs: 15_000 });
 const feed = new MarketFeed(
-  createPublicApi(cli, cfg.okx.apiBase),
+  createPublicApi(cfg.okx.apiBase),
   { min24hVolUsd: cfg.universe.min24hVolUsd, allowNonCrypto: false, spreadGateBps: Math.max(...BEES.map((b) => cfg.bees[b].spreadGateBps)), trendCoins: [...BREEZY_COINS] },
   null,
   () => [],

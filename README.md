@@ -223,8 +223,11 @@ Build the images yourself instead of pulling them:
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-Everything on OKX goes through OKX's own open-source [Agent Trade Kit](https://github.com/okx/agent-trade-kit) CLI
-(MIT). Keys never touch disk inside the container except in the Setup file (`/data/settings.json`, owner-only). The
+Everything on OKX is built on OKX's own open-source [Agent Trade Kit](https://github.com/okx/agent-trade-kit) (MIT).
+Public market data (instruments, tickers, candles, open interest, funding) runs in-process on the kit's own public REST
+client and rate limiter, vendored in `src/okx/kit/` with its licence, so there is no child process per call; `pnpm parity`
+checks it returns the same data as the CLI. Signed calls (orders, positions, fills, leverage, news) go through the kit's
+CLI. Keys never touch disk inside the container except in the Setup file (`/data/settings.json`, owner-only). The
 logger and the event stream redact anything that looks like a key, an IP address or an email.
 
 ## Credits

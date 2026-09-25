@@ -15,7 +15,7 @@ for (const b of BEES) {
   creds[b] = { apiKey: env[`${p}_OKX_DEMO_API_KEY`] ?? "", secretKey: env[`${p}_OKX_DEMO_API_SECRET`] ?? "", passphrase: env[`${p}_OKX_DEMO_API_PASSPHRASE`] ?? "" };
 }
 const cli = createOkxCli({ site: "eea", timeoutMs: 15_000, maxConcurrent: 2 });
-const instruments = new Map((await createPublicApi(cli, "https://eea.okx.com", true).instruments()).map((i) => [i.instId, i]));
+const instruments = new Map((await createPublicApi("https://eea.okx.com", true).instruments()).map((i) => [i.instId, i]));
 const exec = new OkxExecutor(cli, creds, true, (id) => instruments.get(id), 2); // demo hard-wired
 const run = (bee: (typeof BEES)[number], args: string[]) => cli.run<Row[]>({ args, bee, creds: creds[bee], demo: true });
 let problems = 0;

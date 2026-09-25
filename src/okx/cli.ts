@@ -1,6 +1,6 @@
 // Thin wrapper around OKX's own Agent Trade Kit CLI (@okx_ai/okx-trade-cli, MIT).
-// Every OKX call the engine makes, public or private, goes through `okx ... --json`,
-// except public funding-rate, which the CLI rejects for X-Perp ids (see okx/public.ts).
+// Every signed (per-bee) OKX call the engine makes goes through `okx ... --json`. Public market data does not:
+// it runs in-process on the kit's own public REST client (okx/rest.ts, okx/kit), with no child process per call.
 //
 // Secrets: the three profiles (bee1 / bee2 / bee3) in ~/.okx/config.toml carry only
 // `site = "eea"`. The keys stay in .env and are injected per call into the child's env

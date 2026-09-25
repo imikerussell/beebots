@@ -1,13 +1,11 @@
 // Phase 2 check: print the gated X-Perp universe. Public data only, no keys.
 // pnpm universe
 import { gateUniverse } from "../market/universe.js";
-import { createOkxCli } from "../okx/cli.js";
 import { createPublicApi } from "../okx/public.js";
 
 const minVol = Number(process.env.MIN_24H_VOL_USD || 1_000_000);
-const cli = createOkxCli({ site: "eea", timeoutMs: 15_000 });
 const demo = process.argv.includes("--demo");
-const api = createPublicApi(cli, process.env.OKX_API_BASE || "https://eea.okx.com", demo);
+const api = createPublicApi(process.env.OKX_API_BASE || "https://eea.okx.com", demo);
 if (demo) console.log("OKX DEMO market");
 
 const [instruments, tickers] = await Promise.all([api.instruments(), api.tickers()]);

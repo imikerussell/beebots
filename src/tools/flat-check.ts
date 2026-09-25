@@ -29,7 +29,7 @@ const held = async (bee: (typeof BEES)[number]) => (await run(bee, ["futures", "
 const pending = async (bee: (typeof BEES)[number]) => await run(bee, ["futures", "orders"]);
 
 if (process.argv.includes("--close")) {
-  const instruments = new Map((await createPublicApi(cli, env.OKX_API_BASE || "https://eea.okx.com", demo).instruments()).map((i) => [i.instId, i]));
+  const instruments = new Map((await createPublicApi(env.OKX_API_BASE || "https://eea.okx.com", demo).instruments()).map((i) => [i.instId, i]));
   const exec = new OkxExecutor(cli, creds, demo, (id) => instruments.get(id), Number(env.MAX_LEVERAGE || 2));
   for (const bee of BEES) {
     try {
