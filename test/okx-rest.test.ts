@@ -231,4 +231,14 @@ describe("rate limits and backoff", () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(90);
     expect(m.calls).toHaveLength(12);
   });
+
+  it("gets every request of a startup-sized burst through, even when a timer wakes early (real clock)", async () => {
+    const m = mockFetch([ok(CANDLES)]);
+    const r = createOkxPublicRest({ apiBase: "https://eea.okx.com", timeoutMs: 1000, fetch: m.fn });
+    const results = await Promise.allSettled(
+      Array.from({ length: 40 }, (_, i) => r.get("/api/v5/market/candles", { instId: `C${i}` }, { ttlMs: 0, demo: false })),
+    );
+    expect(results.filter((x) => x.status === "rejected")).toHaveLength(0);
+    expect(m.calls).toHaveLength(40);
+  }, 15_000);
 });

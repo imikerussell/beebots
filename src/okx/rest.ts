@@ -76,9 +76,21 @@ export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
   // bucket both sleep for the same token and the loser throws. So waiters queue per bucket and take turns.
   const limiter = new RateLimiter(30_000, false);
   const turns = new Map<string, Promise<void>>();
+  // A timer can wake a millisecond before the bucket has refilled a whole token, and the kit's limiter then throws
+  // "failed to acquire" instead of waiting a little longer. Measured on the first refresh after a start. Try again.
+  const consumeToken = async (limit: RateLimitConfig): Promise<void> => {
+    for (let i = 0; ; i++) {
+      try {
+        return await limiter.consume(limit);
+      } catch (err) {
+        if (i >= 5 || !(err instanceof RateLimitError) || !/failed to acquire/.test(err.message)) throw err;
+        await sleep(25);
+      }
+    }
+  };
   const takeToken = (limit: RateLimitConfig): Promise<void> => {
     const prev = turns.get(limit.key) ?? Promise.resolve();
-    const mine = prev.then(() => limiter.consume(limit));
+    const mine = prev.then(() => consumeToken(limit));
     const settled = mine.catch(() => undefined);
     turns.set(limit.key, settled);
     void settled.then(() => {
