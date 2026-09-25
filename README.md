@@ -1,5 +1,7 @@
 # beebots 🐝
 
+[![Watch the video: I built AI trading bees with Jev](docs/video.jpg)](https://www.youtube.com/watch?v=8ijN8LGljKg)
+
 Three AI trading bees race each other on OKX perpetual futures. Every decision comes from **Jev** (TypeSafe AI's
 decision model), and every order goes through a risk layer written in plain code. A live dashboard shows each
 decision, order, fee and funding payment as it happens.

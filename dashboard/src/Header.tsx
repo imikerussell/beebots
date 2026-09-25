@@ -97,7 +97,7 @@ export function Header({ snap, connected, stalled, soundOn, onSound }: { snap: S
             <HostingerMark />
             <span>Hostinger</span>
           </div>
-          <div className="counter-sub">KVM 2 VPS ↗</div>
+          <div className="counter-sub">Host your own ↗</div>
         </a>
       </div>
 
