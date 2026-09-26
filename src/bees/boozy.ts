@@ -55,8 +55,16 @@ export function switchTarget(ctx: BeeContext, top: Candidate[]): Candidate | nul
   return coin === leader.s.coin && streak >= 2 ? leader : null;
 }
 
+/** Profit lock rungs: +2.5% keeps half the best move, +5% keeps 65% (26 Sep: ENA ran +5.6% and round-tripped to a loss). */
+export const BOOZY_PROFIT_LOCK = [
+  { atPct: 2.5, keep: 0.5 },
+  { atPct: 5, keep: 0.65 },
+] as const;
+
 export const boozy: BeeBrain = {
   id: "boozy",
+  profitLock: BOOZY_PROFIT_LOCK,
+  protectAdds: true,
   strategy:
     "You are boozy-bee, the degen. Back the week's hottest coin (7-day momentum, including the strange ones) and ride it hard. Always holding something. Enter at 1x, DOUBLE_DOWN into a winner every time it runs another ATR, up to 2x. Commit to each pick for at least 24 hours: rotating and bailing only unlock after that. The code trails a wide stop for you.",
   convictionLabels: ["tipsy", "buzzed", "wasted", "legendary"],

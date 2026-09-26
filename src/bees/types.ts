@@ -18,6 +18,8 @@ export interface Position {
   riskUsd: number;
   /** The stop set at entry, before any trailing. R is measured against it so a trailing stop can't shrink R. */
   initialStopPx?: number | null;
+  /** Best price seen since entry in the position's favour (profit lock). */
+  peakPx?: number | null;
   /** breezy: ensemble score at entry, for TRIM_HALF. */
   entryScore?: number;
 }
@@ -101,6 +103,13 @@ export interface BeeBrain {
   stopFor(instId: string, side: Side, entryPx: number, ctx: BeeContext): number | null;
   /** Optional trailing stop candidate; the engine only ever ratchets the stop in the position's favour. */
   trail?(ctx: BeeContext): number | null;
+  /**
+   * Profit lock: once the price has moved `atPct`% in the position's favour (best price since entry, measured from
+   * the average entry), the stop keeps at least `keep` of that best move. The highest rung reached applies. Ratchet only.
+   */
+  profitLock?: ReadonlyArray<{ atPct: number; keep: number }>;
+  /** After an add, the stop may not sit on the losing side of the new average entry (an add can't turn a winner into a loser). */
+  protectAdds?: boolean;
   /** Minimum conviction level (0..3) and probability Jev needs for a discretionary open/switch. */
   openGate?: { minConviction: number; minProb: (ctx: BeeContext) => number };
   /** Discretionary opens must be a strict setup ("loose" picks wait for the max-flat forcing). */

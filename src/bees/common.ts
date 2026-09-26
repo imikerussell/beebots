@@ -28,6 +28,20 @@ export function atrStop(s: CoinStats | undefined, side: Side, entryPx: number, m
   return side === "long" ? entryPx - dist : entryPx + dist;
 }
 
+/**
+ * Profit-lock stop candidate, or null below the first rung. `peakPx` is the best price since entry in the position's
+ * favour; the stop keeps `keep` of the move from `entryPx` to it.
+ */
+export function profitLockStop(side: Side, entryPx: number, peakPx: number, rungs: ReadonlyArray<{ atPct: number; keep: number }>): number | null {
+  const dir = side === "long" ? 1 : -1;
+  const move = dir * (peakPx - entryPx);
+  if (!(move > 0) || !(entryPx > 0)) return null;
+  const gainPct = (move / entryPx) * 100;
+  let keep = 0;
+  for (const r of rungs) if (gainPct >= r.atPct) keep = Math.max(keep, r.keep);
+  return keep > 0 ? entryPx + dir * keep * move : null;
+}
+
 /** Shared per-bee state line for every snapshot. */
 export function beeLine(ctx: BeeContext): Record<string, number | string | null> {
   const { bee, knobs, now } = ctx;

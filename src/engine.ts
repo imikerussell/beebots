@@ -1,7 +1,7 @@
 import { customBrain } from "./bees/custom.js";
 import { BRAINS } from "./bees/index.js";
-import { maxNotionalUsd, minutesSince, positionNotional } from "./bees/common.js";
-import { coinOf, type Action, type BeeBrain, type BeeContext, type BeeState, type Side } from "./bees/types.js";
+import { maxNotionalUsd, minutesSince, positionNotional, profitLockStop } from "./bees/common.js";
+import { coinOf, type Action, type BeeBrain, type BeeContext, type BeeState, type Position, type Side } from "./bees/types.js";
 import { BEES, type BeeId, type Config } from "./config.js";
 import type { Alerts } from "./alerts.js";
 import type { Db } from "./db.js";
@@ -46,6 +46,12 @@ interface LastDecision {
   ts: number;
   /** The rules made the call (one legal move, a hold); Jev was not asked. */
   required?: boolean;
+}
+
+/** Move a stop only in the position's favour. */
+function ratchetStop(p: Position, cand: number): void {
+  if (p.stopPx === null) p.stopPx = cand;
+  else p.stopPx = p.side === "long" ? Math.max(p.stopPx, cand) : Math.min(p.stopPx, cand);
 }
 
 /** The answer when the menu leaves one legal hold: no Jev call, no cost. */
@@ -227,10 +233,14 @@ export class Engine {
     const brain = this.brain(id);
     if (p && brain.trail) {
       const cand = brain.trail(this.ctx(id, now));
-      if (cand !== null && Number.isFinite(cand)) {
-        if (p.stopPx === null) p.stopPx = cand;
-        else p.stopPx = p.side === "long" ? Math.max(p.stopPx, cand) : Math.min(p.stopPx, cand);
-      }
+      if (cand !== null && Number.isFinite(cand)) ratchetStop(p, cand);
+    }
+    // Profit lock: track the best price since entry; past a rung the stop keeps part of that move.
+    if (p && brain.profitLock && t?.mid) {
+      const better = p.peakPx == null || (p.side === "long" ? t.mid > p.peakPx : t.mid < p.peakPx);
+      if (better) p.peakPx = t.mid;
+      const cand = profitLockStop(p.side, p.entryPx, p.peakPx!, brain.profitLock);
+      if (cand !== null && Number.isFinite(cand)) ratchetStop(p, cand);
     }
   }
 
@@ -503,8 +513,12 @@ export class Engine {
         const inst = ctx.view.instruments.get(p.instId);
         const s = ctx.view.stats.get(p.instId);
         const n = inst && s ? contractsFor(action.notionalUsd, inst, s.mid) : 0;
-        if (n > 0) await this.order(id, decisionId, p.instId, p.side === "long" ? "buy" : "sell", n, false, "add");
-        else log.info("add rounds to zero contracts, skipped", { bee: id });
+        if (n > 0) {
+          const ok = await this.order(id, decisionId, p.instId, p.side === "long" ? "buy" : "sell", n, false, "add");
+          const q = this.bees[id].position;
+          // An add raises the average entry; don't let it turn the position into a loser: stop to at least the new average.
+          if (ok && q && this.brain(id).protectAdds) ratchetStop(q, q.entryPx);
+        } else log.info("add rounds to zero contracts, skipped", { bee: id });
         return;
       }
       case "switch":
@@ -677,6 +691,7 @@ export class Engine {
           };
           const np = bee.position;
           np.initialStopPx = keepStop !== null && ours ? (ours.initialStopPx ?? ours.stopPx) : np.stopPx;
+          np.peakPx = keepStop !== null && ours ? (ours.peakPx ?? null) : null;
           if (inst && np.initialStopPx !== null && np.initialStopPx !== undefined) np.riskUsd = sizedRiskUsd(np.contracts, inst.ctVal, np.entryPx, np.initialStopPx);
           bee.flatSince = null;
         }
