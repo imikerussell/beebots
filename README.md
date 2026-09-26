@@ -18,7 +18,7 @@ account unless you change the settings yourself, on purpose.
 
 ## Run your own in one click
 
-[![Deploy on Hostinger](https://assets.hostinger.com/vps/deploy.svg)](https://mrc.fm/beebots)
+[![Deploy on Hostinger](https://assets.hostinger.com/vps/deploy.svg)](https://www.hostg.xyz/aff_c?offer_id=815&aff_id=202403&url=https%3A%2F%2Fwww.hostinger.com%2Fdocker-hosting%3Fcompose_url%3Dhttps%3A%2F%2Fraw.githubusercontent.com%2Fimikerussell%2Fbeebots%2Fmain%2Fdocker-compose.yml%26utm_medium%3Daffiliate%26utm_source%3Daff%7Baffiliate_id%7D%26utm_campaign%3D%7Boffer_id%7D%26session%3D%7Btransaction_id%7D)
 
 Use code **MAGIC10** at checkout for 10% off.
 
@@ -233,6 +233,6 @@ logger and the event stream redact anything that looks like a key, an IP address
 ## Credits
 
 Built by Mike on the Creator Magic YouTube channel, in the video "I gave three AI bees $1,000".
-Hosted on [Hostinger](https://mrc.fm/beebots). Decisions by [Jev](https://typesafe.ai).
+Hosted on [Hostinger](https://www.hostg.xyz/aff_c?offer_id=815&aff_id=202403&url=https%3A%2F%2Fwww.hostinger.com%2Fdocker-hosting%3Fcompose_url%3Dhttps%3A%2F%2Fraw.githubusercontent.com%2Fimikerussell%2Fbeebots%2Fmain%2Fdocker-compose.yml%26utm_medium%3Daffiliate%26utm_source%3Daff%7Baffiliate_id%7D%26utm_campaign%3D%7Boffer_id%7D%26session%3D%7Btransaction_id%7D). Decisions by [Jev](https://typesafe.ai).
 
 MIT licence. No warranty. Not financial advice.
