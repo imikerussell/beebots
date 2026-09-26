@@ -70,10 +70,10 @@ export function BeeColumn({ name, bee, curve, baseline, rank, gap, flash }: Prop
     <section className={`bee ${flashing ? `flash-${flash.kind}` : ""}`} style={{ ["--bee" as string]: meta.color, ["--bee-glow" as string]: meta.glow }}>
       <header className="bee-head">
         <div className="portrait">
-          <img src={meta.img} alt={`${meta.short} portrait`} />
+          <img src={meta.img} alt={`${meta.title} portrait`} />
         </div>
         <div className="bee-id">
-          <div className="bee-name">{meta.short}</div>
+          <div className="bee-name">{meta.title}</div>
           <div className="bee-tag">
             {meta.tagline || meta.styleLabel}
             {meta.coins.length > 0 && <span className="bee-coins"> · {meta.coins.join(" ")}</span>}
@@ -127,7 +127,7 @@ export function BeeColumn({ name, bee, curve, baseline, rank, gap, flash }: Prop
         )}
       </div>
 
-      <EquityChart curve={curve ?? []} color={meta.color} baseline={baseline} gradientId={`g-${meta.short}`} />
+      <EquityChart curve={curve ?? []} color={meta.color} baseline={baseline} gradientId={`g-${name}`} />
 
       <div className="last">
         <div className="last-head">

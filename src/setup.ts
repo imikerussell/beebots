@@ -15,6 +15,8 @@ import { BEES } from "./config.js";
 import { hashPassword, MAX_PASSWORD, MIN_PASSWORD, readJson, send } from "./gate.js";
 import { checkJevKey } from "./jev.js";
 import { log } from "./log.js";
+import { BIZZY_BREAKOUT_COINS } from "./bees/bizzy.js";
+import { BREEZY_COINS } from "./bees/breezy.js";
 import { deriveStyle } from "./bees/custom.js";
 import { fetchXperpCoins } from "./okx/public.js";
 import { checkOpenAiKey, designBee, OpenAiError, paintBee, type BeeDesign } from "./openai.js";
@@ -78,7 +80,21 @@ export function finishDesign(raw: BeeDesign, known: string[]): BeeDesign {
   if (rules.length < 10) throw new DesignError("The designer didn't write any rules. Press Create again.");
   let tagline = raw.tagline.replace(/\s+/g, " ").trim().slice(0, 40);
   if (tagline && !/^the\b/i.test(tagline)) tagline = `the ${tagline}`.slice(0, 40);
-  return { name, tagline, rules, coins, baseStyle: deriveStyle(raw.baseStyle, coins), look: raw.look.replace(/\s+/g, " ").trim().slice(0, 400) };
+  const baseStyle = deriveStyle(raw.baseStyle, coins);
+  const look = raw.look.replace(/\s+/g, " ").trim().slice(0, 400);
+  const out: BeeDesign = { name, tagline, rules, coins, baseStyle, look };
+  if (baseStyle !== raw.baseStyle) out.styleNote = styleNote(raw.baseStyle, baseStyle, coins);
+  return out;
+}
+
+const STYLE_COINS: Partial<Record<BeeDesign["baseStyle"], readonly string[]>> = { bizzy: BIZZY_BREAKOUT_COINS, breezy: BREEZY_COINS };
+const list = (xs: readonly string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : (xs[0] ?? ""));
+
+/** Says out loud why a bee runs on a different brain than the one it was designed for (Setup used to switch silently). */
+export function styleNote(wanted: BeeDesign["baseStyle"], got: BeeDesign["baseStyle"], coins: string[]): string {
+  const only = STYLE_COINS[wanted] ?? [];
+  const what = coins.length ? `with ${list(coins)}` : "on any coin";
+  return `${STYLE_INFO[wanted].label} only trades ${list(only)}, so ${what} this bee runs on ${STYLE_INFO[got].label}.`;
 }
 
 export function imageDir(settingsPath: string): string {

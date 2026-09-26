@@ -37,6 +37,8 @@ export interface BeeDesign {
   coins: string[];
   baseStyle: StyleId;
   look: string;
+  /** Set when the designer asked for a brain that cannot trade these coins, so the bee runs on another one. */
+  styleNote?: string;
 }
 
 /**

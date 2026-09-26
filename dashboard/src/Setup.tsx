@@ -30,6 +30,8 @@ interface Design {
   baseStyle: string;
   styleLabel: string;
   look: string;
+  /** Why the bee runs on a different brain than the one it was designed for. */
+  styleNote?: string;
 }
 interface BeeDraft {
   /** What the owner typed: "How do you want this bee to trade?" */
@@ -430,6 +432,7 @@ export function Setup() {
                           {d.coins.length ? d.coins.map((c) => <span key={c} className="coin-chip">{c}</span>) : <span className="coin-chip any">any coin</span>}
                           <span className="dim small">runs on {d.styleLabel}</span>
                         </div>
+                        {d.styleNote && <p className="setup-note small">{d.styleNote}</p>}
                         <p className="setup-rules">{d.rules}</p>
                         <button className={b.img ? "ghost" : ""} disabled={!!b.busy} onClick={() => void paint(i)}>
                           {b.busy === "paint" ? "Painting… (~40 s)" : b.img ? "Paint again" : "Generate your bee's portrait"}

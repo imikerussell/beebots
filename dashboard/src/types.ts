@@ -125,6 +125,8 @@ export type AnyEvent =
   | { type: "order" | "heartbeat" | "status"; ts: number; [k: string]: unknown };
 
 export interface BeeMeta {
+  /** Card title: "Boozy Bee" for the official three, the owner's own name for a Setup-made bee. */
+  title: string;
   short: string;
   tagline: string;
   styleLabel: string;
@@ -138,9 +140,9 @@ export interface BeeMeta {
 
 /** Colours belong to the slot, so two bees on the same style still look different. Filled in from /profile at load. */
 export const BEE_META: Record<BeeName, BeeMeta> = {
-  bee1: { short: "Bizzy", tagline: "the grinder", styleLabel: "Breakout", rules: "", coins: [], img: "/bees/bizzy.jpg", color: "var(--bizzy)", glow: "var(--bizzy-glow)" },
-  bee2: { short: "Breezy", tagline: "the calculated one", styleLabel: "Trend", rules: "", coins: [], img: "/bees/breezy.jpg", color: "var(--breezy)", glow: "var(--breezy-glow)" },
-  bee3: { short: "Boozy", tagline: "the degen", styleLabel: "Momentum", rules: "", coins: [], img: "/bees/boozy.jpg", color: "var(--boozy)", glow: "var(--boozy-glow)" },
+  bee1: { title: "Bizzy Bee", short: "Bizzy", tagline: "the grinder", styleLabel: "Breakout", rules: "", coins: [], img: "/bees/bizzy.jpg", color: "var(--bizzy)", glow: "var(--bizzy-glow)" },
+  bee2: { title: "Breezy Bee", short: "Breezy", tagline: "the calculated one", styleLabel: "Trend", rules: "", coins: [], img: "/bees/breezy.jpg", color: "var(--breezy)", glow: "var(--breezy-glow)" },
+  bee3: { title: "Boozy Bee", short: "Boozy", tagline: "the degen", styleLabel: "Momentum", rules: "", coins: [], img: "/bees/boozy.jpg", color: "var(--boozy)", glow: "var(--boozy-glow)" },
 };
 
 export interface Profile {
@@ -153,12 +155,15 @@ export interface Profile {
 
 export const PROFILE: { links: Profile["links"] } = { links: null };
 
+const OFFICIAL_NAMES = ["Bizzy", "Breezy", "Boozy"];
+
 export function applyProfile(p: Profile): void {
   PROFILE.links = p.links;
   for (const b of p.bees) {
     const m = BEE_META[b.id];
     if (!m) continue;
     m.short = b.name;
+    m.title = OFFICIAL_NAMES.includes(b.name) ? `${b.name} Bee` : b.name;
     m.tagline = b.tagline;
     m.styleLabel = b.styleLabel;
     m.rules = b.rules ?? "";

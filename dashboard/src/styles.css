@@ -1431,6 +1431,12 @@ textarea.setup-input {
 .setup-err {
   color: var(--critical-text) !important;
 }
+.setup-note {
+  color: var(--muted) !important;
+  border-left: 3px solid var(--bee, var(--muted));
+  padding-left: 10px;
+  margin: 6px 0 0 !important;
+}
 .setup-foot {
   margin-top: 24px !important;
   text-align: center;

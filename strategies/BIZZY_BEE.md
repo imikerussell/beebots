@@ -1,4 +1,4 @@
-# bizzy-bee: the grinder
+# Bizzy Bee: the grinder
 
 > **Live rules since 2026-09-24:** one Larry Williams volatility breakout a day. When BTC, ETH, SOL or HYPE trades above today's UTC open + 0.5 x yesterday's range, Jev may take it long at full size (2x). She rides it to the UTC day close. Her stop is back below today's open, and she can cut it while it's losing. 1 trade a day, fee budget $1.00. She is never forced in. The fade strategy below is her previous design, kept for reference.
 

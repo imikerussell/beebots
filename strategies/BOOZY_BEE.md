@@ -1,4 +1,4 @@
-# boozy-bee: the degen
+# Boozy Bee: the degen
 
 > **Live rules since 2026-09-24:**
 > - Ranks on 7-day momentum (plus small 24h and attention terms), and commits to each pick for 24h: BAIL, SWITCH_COIN and FLIP_SHORT unlock after that.
