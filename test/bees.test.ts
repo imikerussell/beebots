@@ -138,7 +138,8 @@ describe("boozy", () => {
     const young = boozy.menu(ctx("boozy", bee("boozy", { position: position(s, { openedAt: NOW - 23 * 60 * 60_000 }), flatSince: null }), v));
     expect(young.BAIL ?? young.SWITCH_COIN ?? young.FLIP_SHORT).toBeUndefined();
     expect(young.RIDE).toBeDefined();
-    const old = boozy.menu(ctx("boozy", bee("boozy", { position: position(s, { openedAt: NOW - 24 * 60 * 60_000 }), flatSince: null }), v));
+    // SWITCH_COIN also needs PEPE to have led the last two hourly checks (no switching on a stale ranking).
+    const old = boozy.menu(ctx("boozy", bee("boozy", { position: position(s, { openedAt: NOW - 24 * 60 * 60_000 }), flatSince: null, top1: { coin: "PEPE", streak: 2, rankedAt: NOW } }), v));
     expect(old.BAIL && old.SWITCH_COIN && old.FLIP_SHORT).toBeDefined();
   });
   it("DOUBLE_DOWN only after another 1 ATR(1h) run past the entry", () => {

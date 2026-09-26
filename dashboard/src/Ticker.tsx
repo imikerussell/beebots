@@ -27,7 +27,12 @@ const Row = memo(function Row({ d }: { d: DecisionEvent }) {
           {d.latencyMs !== null && <span className="dim">{d.latencyMs}ms</span>}
         </span>
       </div>
-      {d.watch ? (
+      {d.required ? (
+        <div className="tick-pulse num">
+          <span className="side flat">RULES</span>
+          <span className="dim">only legal move · Jev not asked</span>
+        </div>
+      ) : d.watch ? (
         <div className="tick-pulse num">
           <span className="side flat">WATCHING</span>
           <span>{d.watch}</span>

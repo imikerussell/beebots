@@ -651,6 +651,17 @@ a.counter.host:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.required-call {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+.required-choice {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 700;
+  color: var(--bee);
+}
 .probs {
   display: flex;
   flex-direction: column;

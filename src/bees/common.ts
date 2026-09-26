@@ -39,6 +39,8 @@ export function beeLine(ctx: BeeContext): Record<string, number | string | null>
         pos: `${p.side} ${p.coin}`,
         usd: s && inst ? r2(positionNotional(p, s.mid, inst.ctVal), 0) : null,
         upl_r: r2(ctx.uplR, 1),
+        // P&L if the stop were hit right now (the stop trails, so this can be above zero).
+        at_stop_usd: s && inst && p.stopPx !== null ? r2((p.side === "long" ? 1 : -1) * (p.stopPx - p.entryPx) * p.contracts * inst.ctVal, 0) : null,
         held_min: r2(minutesSince(p.openedAt, now), 0),
       }
     : { pos: "flat", flat_min: r2(minutesSince(bee.flatSince, now), 0) };

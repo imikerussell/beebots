@@ -136,6 +136,11 @@ export function BeeColumn({ name, bee, curve, baseline, rank, gap, flash }: Prop
         </div>
         {cap === "trade_cap" || cap === "fee_budget" ? (
           <div className="dim">sitting out while benched: nothing Jev picks could be acted on until 00:00 UTC</div>
+        ) : bee?.last?.required ? (
+          <div className="required-call">
+            <span className="required-choice">{bee.last.choice}</span>
+            <span className="dim">required by the rules · Jev not asked</span>
+          </div>
         ) : bee?.last?.top3.length ? (
           <ProbBars top3={bee.last.top3} choice={bee.last.choice} color={meta.color} big />
         ) : (

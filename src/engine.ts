@@ -8,8 +8,8 @@ import type { Db } from "./db.js";
 import type { EventBus } from "./events.js";
 import type { Executor } from "./exec/executor.js";
 import { contractsFor, roundToLot } from "./exec/sizing.js";
-import type { Jev, JevResult } from "./jev.js";
-import { applyFill, applyFunding, freshBee, mark, rollDay } from "./ledger.js";
+import type { Jev, JevAnswer, JevResult } from "./jev.js";
+import { applyFill, applyFunding, freshBee, mark, rollDay, sizedRiskUsd } from "./ledger.js";
 import { log } from "./log.js";
 import type { MarketFeed } from "./market/data.js";
 import { safeError } from "./redact.js";
@@ -44,6 +44,13 @@ interface LastDecision {
   latencyMs: number | null;
   status: string;
   ts: number;
+  /** The rules made the call (one legal move, a hold); Jev was not asked. */
+  required?: boolean;
+}
+
+/** The answer when the menu leaves one legal hold: no Jev call, no cost. */
+function requiredAnswer(label: string): JevAnswer {
+  return { ok: true, choice: label, probabilities: { [label]: 1 }, confidence: 1, conviction: 0, convictionRaw: 0, inputTokens: 0, costUsd: 0, latencyMs: 0, model: "rules" };
 }
 
 export class Engine {
@@ -204,7 +211,15 @@ export class Engine {
     const view = this.d.feed.view();
     const p = bee.position;
     const t = p ? view.tickers.get(p.instId) : undefined;
-    mark(bee, t?.mid, p ? view.instruments.get(p.instId)?.ctVal : undefined);
+    const ctVal = p ? view.instruments.get(p.instId)?.ctVal : undefined;
+    mark(bee, t?.mid, ctVal);
+    // Positions opened before initialStopPx existed: their stop has never trailed past entry, so it is the entry stop.
+    // Re-size R once from it (R used to stay at the first fill's risk after adds).
+    if (p && p.initialStopPx === undefined && p.stopPx !== null && ctVal) {
+      const lossSide = p.side === "long" ? p.stopPx < p.entryPx : p.stopPx > p.entryPx;
+      p.initialStopPx = lossSide ? p.stopPx : null;
+      if (lossSide) p.riskUsd = sizedRiskUsd(p.contracts, ctVal, p.entryPx, p.stopPx);
+    }
     if (rollDay(bee, now)) {
       this.d.bus.emit("cap", { bee: id, cap: null, detail: "new UTC day: counters and caps reset" }, now);
     }
@@ -233,8 +248,13 @@ export class Engine {
 
     let jevStatus: JevStatus = "ok";
     let r: JevResult | null = null;
+    // One legal move and it is "keep what you hold" (a Momentum bee inside its 24h lock): asking Jev buys nothing, so
+    // the rules make the call. Only for a hold: a lone open or close still goes to Jev.
+    const labels = Object.keys(menu);
+    const required = labels.length === 1 && menu[labels[0]!]!.intent.kind === "hold";
     if (jev.capTripped) jevStatus = "daily_cap";
-    else if (Object.keys(menu).length === 0) jevStatus = "no_options";
+    else if (labels.length === 0) jevStatus = "no_options";
+    else if (required) r = requiredAnswer(labels[0]!);
     else {
       r = await jev.decide({ strategy: brain.strategy, state: snap.state, menu, convictionLabels: brain.convictionLabels });
       if (!r.ok) jevStatus = r.reason === "daily_cap" ? "daily_cap" : "unreachable";
@@ -259,6 +279,9 @@ export class Engine {
       this.d.alerts.send(`${this.d.cfg.slots[id].name}: ${detail}`);
     }
     bee.cap = risk.cap;
+    // A rules-only hold that the risk layer left alone (a stop or cap still overrides it and shows as usual).
+    const ruled = required && risk.action.kind === "none" && !risk.forcedBy;
+    const status = ruled ? `${labels[0]}: required by rules, Jev not asked` : risk.status;
 
     // Hard rule 10: recorded before it is acted on.
     const costUsd = r && r.ok ? r.costUsd : 0;
@@ -279,37 +302,39 @@ export class Engine {
       action: risk.action,
       vetoedBy: risk.vetoedBy,
       forcedBy: risk.forcedBy,
-      status: risk.status,
+      status,
     });
     bee.totals.jevUsd += costUsd;
     bee.totals.decisions++;
 
     const top3 = r && r.ok ? (Object.entries(r.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3) as Array<[string, number]>) : [];
-    this.last[id] = { choice: r && r.ok ? r.choice : null, top3, confidence: r && r.ok ? r.confidence : null, latencyMs: r ? r.latencyMs : null, status: risk.status, ts: now };
+    this.last[id] = { choice: r && r.ok ? r.choice : null, top3: ruled ? [] : top3, confidence: r && r.ok && !ruled ? r.confidence : null, latencyMs: ruled ? null : r ? r.latencyMs : null, status, ts: now, ...(ruled ? { required: true } : {}) };
     // Flat and nothing to ask Jev (bizzy waiting for her breakout): a live "watching" row every PULSE_MS instead of a
     // "no call" row every tick, so the stream shows how close the trigger is.
     const watching = jevStatus === "no_options" && !bee.position && !!brain.idleStatus && risk.action.kind === "none";
-    if (watching && now - (this.lastPulseAt[id] ?? 0) < PULSE_MS) {
+    // Same for a rules-only hold: a row every PULSE_MS, not every tick.
+    if ((watching || ruled) && now - (this.lastPulseAt[id] ?? 0) < PULSE_MS) {
       db.saveBee(bee, now);
       return;
     }
-    if (watching) this.lastPulseAt[id] = now;
+    if (watching || ruled) this.lastPulseAt[id] = now;
     bus.emit(
       "decision",
       {
         bee: id,
         choice: r && r.ok ? r.choice : watching ? "WATCHING" : null,
         ...(watching ? { watch: risk.status } : {}),
-        probabilities: top3.map(([label, p]) => ({ label, p: Number(p.toFixed(3)) })),
-        confidence: r && r.ok ? Number(r.confidence.toFixed(3)) : null,
-        conviction: r && r.ok ? brain.convictionLabels[r.conviction] : null,
-        latencyMs: r ? r.latencyMs : null,
-        tokens: r && r.ok ? r.inputTokens : null,
+        probabilities: ruled ? [] : top3.map(([label, p]) => ({ label, p: Number(p.toFixed(3)) })),
+        ...(ruled ? { required: true } : {}),
+        confidence: r && r.ok && !ruled ? Number(r.confidence.toFixed(3)) : null,
+        conviction: r && r.ok && !ruled ? brain.convictionLabels[r.conviction] : null,
+        latencyMs: ruled ? null : r ? r.latencyMs : null,
+        tokens: r && r.ok && !ruled ? r.inputTokens : null,
         jevUsd: Number(costUsd.toFixed(6)),
         action: describeAction(risk.action),
         vetoedBy: risk.vetoedBy,
         forcedBy: risk.forcedBy,
-        status: risk.status,
+        status,
         jev: jevStatus,
         ...this.liveChip(id),
       },
@@ -412,6 +437,7 @@ export class Engine {
       const ctx = this.ctx(id, this.now());
       const inst = ctx.view.instruments.get(last.instId);
       p.stopPx = this.brain(id).stopFor(last.instId, p.side, p.entryPx, ctx);
+      p.initialStopPx = p.stopPx;
       const notional = inst ? positionNotional(p, p.entryPx, inst.ctVal) : 0;
       p.riskUsd = p.stopPx !== null ? (notional * Math.abs(p.entryPx - p.stopPx)) / p.entryPx : notional * 0.01;
       this.d.db.saveBee(bee, now);
@@ -511,6 +537,7 @@ export class Engine {
     const ctx = this.ctx(id, this.now());
     const p = bee.position;
     p.stopPx = this.brain(id).stopFor(instId, side, p.entryPx, ctx);
+    p.initialStopPx = p.stopPx;
     const notional = positionNotional(p, p.entryPx, inst.ctVal);
     p.riskUsd = p.stopPx !== null ? (notional * Math.abs(p.entryPx - p.stopPx)) / p.entryPx : notional * 0.01;
     if (s.trend) p.entryScore = s.trend.score;
@@ -648,6 +675,9 @@ export class Engine {
             stopPx: keepStop ?? this.brain(id).stopFor(theirs.instId, side, theirs.avgPx, this.ctx(id, now)),
             riskUsd: ours?.riskUsd ?? (inst ? Math.abs(theirs.pos) * inst.ctVal * theirs.avgPx * 0.01 : 0),
           };
+          const np = bee.position;
+          np.initialStopPx = keepStop !== null && ours ? (ours.initialStopPx ?? ours.stopPx) : np.stopPx;
+          if (inst && np.initialStopPx !== null && np.initialStopPx !== undefined) np.riskUsd = sizedRiskUsd(np.contracts, inst.ctVal, np.entryPx, np.initialStopPx);
           bee.flatSince = null;
         }
       }

@@ -1,7 +1,7 @@
 // boozy-bee: top-gainer rotation + attention spikes on the gated universe. See strategies/BOOZY_BEE.md.
 import type { CoinStats, MarketView } from "../market/types.js";
 import { atrStop, maxNotionalUsd, minutesSince, positionNotional, r2 } from "./common.js";
-import type { BeeBrain, Menu } from "./types.js";
+import type { BeeBrain, BeeContext, Menu } from "./types.js";
 
 export interface Candidate {
   s: CoinStats;
@@ -37,6 +37,22 @@ export function rankCandidates(view: MarketView, spreadGateBps: number): Candida
       return { s, score, attention };
     })
     .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * The coin to offer a switch into, or null. Only when another coin outranks the held one right now AND was #1 on
+ * the last two hourly checks (bee.top1, streak >= 2). If the held coin is missing from the fresh ranking (spread gate,
+ * missing data) there is no fair comparison, so no switch is offered.
+ */
+export function switchTarget(ctx: BeeContext, top: Candidate[]): Candidate | null {
+  const p = ctx.bee.position;
+  if (!p) return null;
+  const all = rankCandidates(ctx.view, ctx.knobs.spreadGateBps);
+  const heldAt = all.findIndex((c) => c.s.instId === p.instId);
+  const leader = top[0];
+  if (heldAt < 0 || !leader || leader.s.instId === p.instId) return null;
+  const { coin, streak } = ctx.bee.top1;
+  return coin === leader.s.coin && streak >= 2 ? leader : null;
 }
 
 export const boozy: BeeBrain = {
@@ -90,7 +106,7 @@ export const boozy: BeeBrain = {
     m.RIDE = { desc: "keep position", intent: { kind: "hold" } };
     const committed = minutesSince(p.openedAt, ctx.now) < BOOZY_MIN_HOLD_MIN;
     if (!committed) m.BAIL = { desc: "close now", intent: { kind: "close", reason: "bail" } };
-    const best = top.find((c) => c.s.instId !== p.instId);
+    const best = switchTarget(ctx, top);
     if (best && !committed) {
       m.SWITCH_COIN = {
         desc: `close, ape ${best.s.coin}`,

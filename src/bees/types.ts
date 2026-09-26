@@ -14,8 +14,10 @@ export interface Position {
   openedAt: number;
   /** Hard stop price, set by code at entry and trailed by the risk layer. */
   stopPx: number | null;
-  /** USD at risk at entry (notional x stop distance). 1R. */
+  /** USD at risk as sized: contracts x ctVal x |average entry - initial stop|. 1R. Re-sized on every add. */
   riskUsd: number;
+  /** The stop set at entry, before any trailing. R is measured against it so a trailing stop can't shrink R. */
+  initialStopPx?: number | null;
   /** breezy: ensemble score at entry, for TRIM_HALF. */
   entryScore?: number;
 }

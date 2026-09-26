@@ -58,6 +58,9 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
     const total = p.contracts + f.contracts;
     p.entryPx = (p.entryPx * p.contracts + f.px * f.contracts) / total;
     p.contracts = total;
+    // An add makes the position bigger, so 1R grows with it (it used to stay at the first fill's risk).
+    const initStop = p.initialStopPx ?? p.stopPx;
+    if (initStop !== null && initStop !== undefined) p.riskUsd = sizedRiskUsd(total, f.ctVal, p.entryPx, initStop);
     return 0;
   }
   // reduce / close
@@ -77,6 +80,11 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
     }
   }
   return realised;
+}
+
+/** USD lost if the whole position exits at `stopPx` from its average entry. */
+export function sizedRiskUsd(contracts: number, ctVal: number, entryPx: number, stopPx: number): number {
+  return Math.abs(contracts * ctVal * (entryPx - stopPx));
 }
 
 function newPosition(f: LedgerFill, dir: number): Position {

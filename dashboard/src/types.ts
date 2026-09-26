@@ -14,6 +14,8 @@ export interface LastDecision {
   latencyMs: number | null;
   status: string;
   ts: number;
+  /** The rules made the call (one legal move, a hold); Jev was not asked. */
+  required?: boolean;
 }
 
 export interface PublicBee {
@@ -80,6 +82,8 @@ export interface DecisionEvent {
   pulse?: boolean;
   /** Flat bee with nothing to ask Jev: what it is watching for (e.g. "SOL is 0.80% from breakout"). */
   watch?: string;
+  /** One legal move (a hold, e.g. boozy's 24h lock): the rules decided and Jev was not asked. */
+  required?: boolean;
   /** The bee's money at this moment: open P&L while positioned, total P&L when flat, and the move since its last row. */
   live?: { coin: string | null; side: "long" | "short" | null; valueUsd: number; kind: "open" | "total"; deltaUsd: number };
 }
