@@ -1,11 +1,11 @@
 // Thin wrapper around OKX's own Agent Trade Kit CLI (@okx_ai/okx-trade-cli, MIT).
-// Every signed (per-bee) OKX call the engine makes goes through `okx ... --json`. Public market data does not:
+// Every signed (per-cat) OKX call the engine makes goes through `okx ... --json`. Public market data does not:
 // it runs in-process on the kit's own public REST client (okx/rest.ts, okx/kit), with no child process per call.
 //
-// Secrets: the three profiles (bee1 / bee2 / bee3) in ~/.okx/config.toml carry only
+// Secrets: the two profiles (tiger / mochi) in ~/.okx/config.toml carry only
 // `site = "eea"`. The keys stay in .env and are injected per call into the child's env
 // (OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE take precedence over the profile in the kit).
-// The child gets a minimal env, so one bee's call never sees another bee's keys.
+// The child gets a minimal env, so one cat's call never sees the other cat's keys.
 
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
@@ -43,17 +43,28 @@ export function parseCliError(stderr: string, stdout: string): OkxCliError {
   const text = `${stderr}\n${stdout}`;
   const code = /\b(5\d{4}|50\d{3})\b/.exec(text)?.[1] ?? "CLI";
   // OKX's own reason, when the CLI prints the JSON response (the first line alone can be just "[").
-  const okxMsg = /"sMsg"\s*:\s*"([^"]+)"/.exec(text)?.[1] ?? /"msg"\s*:\s*"([^"]+)"/.exec(text)?.[1];
+  const okxMsg =
+    /"sMsg"\s*:\s*"([^"]+)"/.exec(text)?.[1] ??
+    /"msg"\s*:\s*"([^"]+)"/.exec(text)?.[1];
   if (okxMsg) return new OkxCliError(code, redactString(okxMsg).slice(0, 240));
   const line =
     text
       .split("\n")
       .map((l) => l.trim())
-      .find((l) => l.startsWith("Error:")) ?? text.trim().split("\n")[0] ?? "okx cli failed";
-  return new OkxCliError(code, redactString(line.replace(/^Error:\s*/, "")).slice(0, 240));
+      .find((l) => l.startsWith("Error:")) ??
+    text.trim().split("\n")[0] ??
+    "okx cli failed";
+  return new OkxCliError(
+    code,
+    redactString(line.replace(/^Error:\s*/, "")).slice(0, 240),
+  );
 }
 
-export function createOkxCli(opts: { site: "eea"; timeoutMs: number; maxConcurrent?: number }): OkxCli {
+export function createOkxCli(opts: {
+  site: "eea";
+  timeoutMs: number;
+  maxConcurrent?: number;
+}): OkxCli {
   let active = 0;
   const queue: Array<() => void> = [];
   const maxConcurrent = opts.maxConcurrent ?? 6;
@@ -93,14 +104,25 @@ export function createOkxCli(opts: { site: "eea"; timeoutMs: number; maxConcurre
           execFile(
             process.execPath,
             [CLI_JS, ...flags, ...call.args],
-            { env, timeout: opts.timeoutMs + 2000, maxBuffer: 32 * 1024 * 1024, encoding: "utf8" },
-            (err, out, errOut) => (err ? reject(parseCliError(errOut ?? "", out ?? "")) : resolve(out)),
+            {
+              env,
+              timeout: opts.timeoutMs + 2000,
+              maxBuffer: 32 * 1024 * 1024,
+              encoding: "utf8",
+            },
+            (err, out, errOut) =>
+              err
+                ? reject(parseCliError(errOut ?? "", out ?? ""))
+                : resolve(out),
           );
         });
         try {
           return JSON.parse(stdout) as T;
         } catch {
-          throw new OkxCliError("PARSE", `non-JSON output from okx ${call.args.slice(0, 2).join(" ")}`);
+          throw new OkxCliError(
+            "PARSE",
+            `non-JSON output from okx ${call.args.slice(0, 2).join(" ")}`,
+          );
         }
       } finally {
         release();

@@ -41,6 +41,7 @@ export interface FundingNow {
 
 /** Everything the snapshot builder and risk layer may know about one coin. Numbers only. */
 export interface CoinStats {
+  refreshedAt?: number;
   instId: string;
   coin: string;
   last: number;
@@ -49,6 +50,8 @@ export interface CoinStats {
   ask: number;
   spreadBp: number;
   vol24hUsd: number;
+  /** Last completed 15m close and its opening timestamp. */
+  confirmed15m?: { close: number; ts: number };
   // 15m bars
   rsi14: number | null;
   pctB: number | null;
@@ -72,7 +75,7 @@ export interface CoinStats {
   // 4h trend (breezy's coins only)
   trend?: TrendStats;
   /** Larry Williams volatility breakout (bizzy): today's UTC open + k x yesterday's range, from 1h bars. */
-  breakout?: { dayOpen: number; prevRange: number; trigger: number } | null;
+  breakout?: { dayOpen: number; prevRange: number; trigger: number; dayStart?: number } | null;
 }
 
 export interface TrendStats {

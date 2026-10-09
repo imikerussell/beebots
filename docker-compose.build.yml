@@ -1,16 +1,12 @@
-# Build the three images from this checkout instead of pulling them:
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# Compatibility with the upstream build invocation. All Catfolio images now build locally by default.
 services:
   engine:
-    image: beebots-engine:local
     build: .
   web:
-    image: beebots-web:local
     build:
       context: .
       dockerfile: deploy/web.Dockerfile
   backup:
-    image: beebots-backup:local
     build:
       context: deploy
       dockerfile: backup.Dockerfile

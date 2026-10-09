@@ -11,7 +11,12 @@
 
 import { log } from "../log.js";
 import { NetworkError, OkxMcpError, RateLimitError } from "./kit/errors.js";
-import { buildQueryString, OkxPublicClient, RETRYABLE_OKX_CODES, type QueryParams } from "./kit/public-client.js";
+import {
+  buildQueryString,
+  OkxPublicClient,
+  RETRYABLE_OKX_CODES,
+  type QueryParams,
+} from "./kit/public-client.js";
 import { RateLimiter, type RateLimitConfig } from "./kit/rate-limiter.js";
 
 export { OkxMcpError };
@@ -21,14 +26,42 @@ export { OkxMcpError };
  * C + 2R requests through in any 2 s window; every one here stays at or under 75% of OKX's limit.
  */
 export const OKX_PUBLIC_LIMITS: Record<string, RateLimitConfig> = {
-  "/api/v5/market/candles": { key: "public:candles", capacity: 10, refillPerSecond: 10 }, // OKX 40 / 2 s
-  "/api/v5/market/tickers": { key: "public:tickers", capacity: 5, refillPerSecond: 5 }, // OKX 20 / 2 s
-  "/api/v5/public/instruments": { key: "public:instruments", capacity: 5, refillPerSecond: 5 }, // OKX 20 / 2 s
-  "/api/v5/public/open-interest": { key: "public:open-interest", capacity: 5, refillPerSecond: 5 }, // OKX 20 / 2 s
-  "/api/v5/public/funding-rate": { key: "public:funding-rate", capacity: 5, refillPerSecond: 5 }, // OKX 20 / 2 s per instId
-  "/api/v5/public/funding-rate-history": { key: "public:funding-rate-history", capacity: 2, refillPerSecond: 2 }, // OKX 10 / 2 s per instId
+  "/api/v5/market/candles": {
+    key: "public:candles",
+    capacity: 10,
+    refillPerSecond: 10,
+  }, // OKX 40 / 2 s
+  "/api/v5/market/tickers": {
+    key: "public:tickers",
+    capacity: 5,
+    refillPerSecond: 5,
+  }, // OKX 20 / 2 s
+  "/api/v5/public/instruments": {
+    key: "public:instruments",
+    capacity: 5,
+    refillPerSecond: 5,
+  }, // OKX 20 / 2 s
+  "/api/v5/public/open-interest": {
+    key: "public:open-interest",
+    capacity: 5,
+    refillPerSecond: 5,
+  }, // OKX 20 / 2 s
+  "/api/v5/public/funding-rate": {
+    key: "public:funding-rate",
+    capacity: 5,
+    refillPerSecond: 5,
+  }, // OKX 20 / 2 s per instId
+  "/api/v5/public/funding-rate-history": {
+    key: "public:funding-rate-history",
+    capacity: 2,
+    refillPerSecond: 2,
+  }, // OKX 10 / 2 s per instId
 };
-const DEFAULT_LIMIT: RateLimitConfig = { key: "public:other", capacity: 3, refillPerSecond: 3 };
+const DEFAULT_LIMIT: RateLimitConfig = {
+  key: "public:other",
+  capacity: 3,
+  refillPerSecond: 3,
+};
 
 export interface RestOpts {
   apiBase: string;
@@ -53,10 +86,16 @@ export interface GetOpts {
 export interface OkxPublicRest {
   get<T>(path: string, query: QueryParams, opts: GetOpts): Promise<T>;
   /** Counters for logs and tests: requests actually sent to OKX, cache/in-flight hits, retries. */
-  readonly stats: { sent: number; shared: number; retries: number; rateLimited: number };
+  readonly stats: {
+    sent: number;
+    shared: number;
+    retries: number;
+    rateLimited: number;
+  };
 }
 
-const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const defaultSleep = (ms: number) =>
+  new Promise<void>((r) => setTimeout(r, ms));
 
 export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
   const now = opts.now ?? Date.now;
@@ -64,7 +103,12 @@ export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
   const maxConcurrent = opts.maxConcurrent ?? 8;
   const maxRlRetries = opts.maxRateLimitRetries ?? 3;
   const client = new OkxPublicClient(
-    { baseUrl: opts.apiBase.replace(/\/+$/, ""), timeoutMs: opts.timeoutMs, userAgent: opts.userAgent ?? "beebots (okx-agent-trade-kit core 1.4.8)", site: "eea" },
+    {
+      baseUrl: opts.apiBase.replace(/\/+$/, ""),
+      timeoutMs: opts.timeoutMs,
+      userAgent: opts.userAgent ?? "Catfolio (okx-agent-trade-kit core 1.4.8)",
+      site: "eea",
+    },
     opts.fetch,
   );
   const cache = new Map<string, { at: number; data: unknown }>();
@@ -83,7 +127,12 @@ export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
       try {
         return await limiter.consume(limit);
       } catch (err) {
-        if (i >= 5 || !(err instanceof RateLimitError) || !/failed to acquire/.test(err.message)) throw err;
+        if (
+          i >= 5 ||
+          !(err instanceof RateLimitError) ||
+          !/failed to acquire/.test(err.message)
+        )
+          throw err;
         await sleep(25);
       }
     }
@@ -113,7 +162,11 @@ export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
     queue.shift()?.();
   };
 
-  async function send<T>(path: string, query: QueryParams, demo: boolean): Promise<T> {
+  async function send<T>(
+    path: string,
+    query: QueryParams,
+    demo: boolean,
+  ): Promise<T> {
     const limit = OKX_PUBLIC_LIMITS[path] ?? DEFAULT_LIMIT;
     let rlTries = 0;
     let otherTries = 0;
@@ -133,12 +186,23 @@ export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
           if (rlTries >= maxRlRetries) throw err;
           const backoff = 1000 * 2 ** rlTries + Math.floor(Math.random() * 250);
           rlTries++;
-          coolUntil.set(path, Math.max(coolUntil.get(path) ?? 0, now() + backoff));
+          coolUntil.set(
+            path,
+            Math.max(coolUntil.get(path) ?? 0, now() + backoff),
+          );
           stats.retries++;
-          log.warn("okx public rate limited, backing off", { path, backoffMs: backoff, attempt: rlTries });
+          log.warn("okx public rate limited, backing off", {
+            path,
+            backoffMs: backoff,
+            attempt: rlTries,
+          });
           continue;
         }
-        if ((err instanceof NetworkError || (code !== undefined && RETRYABLE_OKX_CODES.has(code))) && otherTries < 1) {
+        if (
+          (err instanceof NetworkError ||
+            (code !== undefined && RETRYABLE_OKX_CODES.has(code))) &&
+          otherTries < 1
+        ) {
           otherTries++;
           stats.retries++;
           await sleep(500);
@@ -173,7 +237,8 @@ export function createOkxPublicRest(opts: RestOpts): OkxPublicRest {
         .finally(() => inflight.delete(key));
       inflight.set(key, p);
       // Keep the cache small: drop anything older than a minute.
-      if (cache.size > 500) for (const [k, v] of cache) if (now() - v.at > 60_000) cache.delete(k);
+      if (cache.size > 500)
+        for (const [k, v] of cache) if (now() - v.at > 60_000) cache.delete(k);
       return p;
     },
   };

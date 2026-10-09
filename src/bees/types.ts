@@ -22,6 +22,8 @@ export interface Position {
   peakPx?: number | null;
   /** breezy: ensemble score at entry, for TRIM_HALF. */
   entryScore?: number;
+  /** One score-deterioration trim per position, persisted with its fill. */
+  trendTrimmed?: boolean;
 }
 
 export type CapReason = "trade_cap" | "fee_budget" | "loss_stop" | "retired";
@@ -41,9 +43,22 @@ export interface BeeState {
   tradesToday: number;
   feesTodayUsd: number;
   lastOrderAt: number | null;
+  lastEntryAt: number | null;
+  peakEquityUsd: number;
+  maxDrawdownPct: number;
+  exposedMs: number;
+  metricsAt: number;
+  slippageUsd: number;
   /** Active cap until 00:00 UTC (or forever for "retired"). */
   cap: CapReason | null;
-  totals: { feesUsd: number; fundingUsd: number; jevUsd: number; realisedUsd: number; decisions: number; orders: number };
+  totals: {
+    feesUsd: number;
+    fundingUsd: number;
+    jevUsd: number;
+    realisedUsd: number;
+    decisions: number;
+    orders: number;
+  };
   /** boozy: who was #1 on the previous hourly rank, and for how many ranks in a row. */
   top1: { coin: string | null; streak: number; rankedAt: number };
 }
@@ -51,9 +66,21 @@ export interface BeeState {
 /** What a menu option means, in code. The risk layer turns this into a final action. */
 export type Intent =
   | { kind: "hold" }
-  | { kind: "open"; instId: string; side: Side; sizeFrac: number; setup: "strict" | "loose" }
+  | {
+      kind: "open";
+      instId: string;
+      side: Side;
+      sizeFrac: number;
+      setup: "strict" | "loose";
+    }
   | { kind: "close"; reason: string }
-  | { kind: "switch"; instId: string; side: Side; sizeFrac: number; setup: "strict" | "loose" }
+  | {
+      kind: "switch";
+      instId: string;
+      side: Side;
+      sizeFrac: number;
+      setup: "strict" | "loose";
+    }
   | { kind: "add"; sizeFrac: number }
   | { kind: "trim"; fraction: number };
 
@@ -92,15 +119,27 @@ export interface BeeBrain {
   universe(ctx: BeeContext): string[];
   menu(ctx: BeeContext): Menu;
   /** Per-coin numbers for this bee's snapshot. */
-  coinSnapshot(s: CoinStats, ctx: BeeContext): Record<string, number | string | null>;
+  coinSnapshot(
+    s: CoinStats,
+    ctx: BeeContext,
+  ): Record<string, number | string | null>;
   /** Coins shown in the snapshot (instIds). */
   snapshotCoins(ctx: BeeContext): string[];
   /** Drama rule 2: what the code forces when this bee has been flat too long. null = nothing possible. */
   forcedEntry(ctx: BeeContext): Extract<Intent, { kind: "open" }> | null;
   /** Fraction of max notional for a chosen open, given conviction level 0..3. */
-  sizeFrac(intent: Extract<Intent, { kind: "open" | "switch" }>, conviction: number, ctx: BeeContext): number;
+  sizeFrac(
+    intent: Extract<Intent, { kind: "open" | "switch" }>,
+    conviction: number,
+    ctx: BeeContext,
+  ): number;
   /** Stop price for a new position (code decides, not Jev). */
-  stopFor(instId: string, side: Side, entryPx: number, ctx: BeeContext): number | null;
+  stopFor(
+    instId: string,
+    side: Side,
+    entryPx: number,
+    ctx: BeeContext,
+  ): number | null;
   /** Optional trailing stop candidate; the engine only ever ratchets the stop in the position's favour. */
   trail?(ctx: BeeContext): number | null;
   /**
@@ -118,6 +157,8 @@ export interface BeeBrain {
   fundingVetoLongZ?: number;
   /** Close any position older than this many minutes. */
   timeStopMinutes?: (ctx: BeeContext) => number;
+  /** Deterministic risk-reducing strategy exit, independent of inference. */
+  protectiveExit?: (ctx: BeeContext) => string | null;
   /** Code-side sizing: an add that brings an undersized position back to target (fires when Jev holds). */
   rebalance?: (ctx: BeeContext) => Extract<Intent, { kind: "add" }> | null;
   /** This bee waits for its setup instead of being forced in when flat (drama rule 2 does not apply). */

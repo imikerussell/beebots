@@ -1,8 +1,22 @@
 import { log } from "../log.js";
 import type { PublicApi } from "../okx/public.js";
 import { safeError } from "../redact.js";
-import { atr, bollinger, macd, pctChange, rsi, trendStats, zScore } from "./indicators.js";
-import type { Candle, CoinStats, Instrument, MarketView, Ticker } from "./types.js";
+import {
+  atr,
+  bollinger,
+  macd,
+  pctChange,
+  rsi,
+  trendStats,
+  zScore,
+} from "./indicators.js";
+import type {
+  Candle,
+  CoinStats,
+  Instrument,
+  MarketView,
+  Ticker,
+} from "./types.js";
 import { gateUniverse } from "./universe.js";
 
 export interface NewsReading {
@@ -13,23 +27,33 @@ export interface NewsReading {
 }
 
 /** News/sentiment source (the kit's `news` module). Returns null when unavailable. */
-export type NewsSource = (coins: string[]) => Promise<Map<string, NewsReading> | null>;
+export type NewsSource = (
+  coins: string[],
+) => Promise<Map<string, NewsReading> | null>;
 
 export interface FeedOpts {
   min24hVolUsd: number;
   allowNonCrypto: boolean;
-  /** The widest spread gate of any bee (boozy's), used for the shared universe. */
+  /** The widest cat spread gate, used for the shared universe. */
   spreadGateBps: number;
-  /** Coins that always get stats + 4h trend data (breezy's majors). */
+  /** Coins that always get stats and 4h trend data. */
   trendCoins: string[];
+  allowedCoins?: string[];
+  breakoutK?: number;
 }
 
 const HOUR = 3_600_000;
 
-export function computeStats(inst: Instrument, t: Ticker, c15: Candle[], c1h: Candle[]): CoinStats {
+export function computeStats(
+  inst: Instrument,
+  t: Ticker,
+  c15: Candle[],
+  c1h: Candle[],
+): CoinStats {
   const closes15 = c15.map((c) => c.c);
   const closes1h = c1h.map((c) => c.c);
   const last = t.last;
+  const confirmed15m = c15.filter((c) => c.confirmed).at(-1);
   const bb = bollinger(c15);
   const a = atr(c15);
   const m = macd(closes15);
@@ -37,6 +61,9 @@ export function computeStats(inst: Instrument, t: Ticker, c15: Candle[], c1h: Ca
   const volLatest = confirmed1h[confirmed1h.length - 1]?.volUsd;
   const volHist = confirmed1h.slice(-169, -1).map((c) => c.volUsd);
   return {
+    confirmed15m: confirmed15m
+      ? { close: confirmed15m.c, ts: confirmed15m.ts }
+      : undefined,
     instId: inst.instId,
     coin: inst.coin,
     last,
@@ -62,6 +89,23 @@ export function computeStats(inst: Instrument, t: Ticker, c15: Candle[], c1h: Ca
     newsZ: null,
     sentiment: null,
   };
+}
+
+/** A successful HTTP response alone does not make old candle history fresh. */
+export function requireRecentCandles(
+  candles: Candle[],
+  periodMs: number,
+  now: number,
+): void {
+  const latest = candles.filter((c) => c.confirmed).at(-1);
+  if (
+    !latest ||
+    !Number.isFinite(latest.ts) ||
+    latest.ts > now ||
+    now - latest.ts > 2 * periodMs + 60000
+  ) {
+    throw new Error("Missing or stale confirmed candle history");
+  }
 }
 
 export class MarketFeed {
@@ -97,7 +141,8 @@ export class MarketFeed {
   }
 
   instIdForCoin(coin: string): string | undefined {
-    for (const i of this.instruments.values()) if (i.coin === coin && i.state === "live") return i.instId;
+    for (const i of this.instruments.values())
+      if (i.coin === coin && i.state === "live") return i.instId;
     return undefined;
   }
 
@@ -120,10 +165,21 @@ export class MarketFeed {
   async refresh(now = Date.now()): Promise<void> {
     if (now - this.instrumentsAt > HOUR || this.instruments.size === 0) {
       const list = await this.api.instruments();
-      this.instruments = new Map(list.map((i) => [i.instId, i]));
+      this.instruments = new Map(
+        list
+          .filter(
+            (i) =>
+              !this.opts.allowedCoins ||
+              this.opts.allowedCoins.includes(i.coin),
+          )
+          .map((i) => [i.instId, i]),
+      );
       this.instrumentsAt = now;
     }
-    const [tickers, oi] = await Promise.all([this.api.tickers(), this.api.openInterest()]);
+    const [tickers, oi] = await Promise.all([
+      this.api.tickers(),
+      this.api.openInterest(),
+    ]);
     this.tickers = tickers;
     const u = gateUniverse(this.instruments.values(), tickers, {
       min24hVolUsd: this.opts.min24hVolUsd,
@@ -140,8 +196,12 @@ export class MarketFeed {
       this.oiHistory.set(id, h);
     }
 
-    const trendIds = this.opts.trendCoins.map((c) => this.instIdForCoin(c)).filter((x): x is string => !!x);
-    const want = [...new Set([...this.gated, ...trendIds, ...this.heldInstIds()])].filter((id) => this.instruments.has(id) && tickers.has(id));
+    const trendIds = this.opts.trendCoins
+      .map((c) => this.instIdForCoin(c))
+      .filter((x): x is string => !!x);
+    const want = [
+      ...new Set([...this.gated, ...trendIds, ...this.heldInstIds()]),
+    ].filter((id) => this.instruments.has(id) && tickers.has(id));
 
     const next = new Map<string, CoinStats>();
     await Promise.all(
@@ -152,22 +212,35 @@ export class MarketFeed {
           const [c15, c1h, c4h, funding, fHist] = await Promise.all([
             this.api.candles(id, "15m", 100),
             this.api.candles(id, "1H", 200),
-            isTrend ? this.api.candles(id, "4H", 300) : Promise.resolve(null),
+            isTrend ? this.api.candles(id, "4H", 400) : Promise.resolve(null),
             this.api.funding(id).catch(() => null),
             this.fundingHistory(id, now),
           ]);
-          const s = computeStats(inst, tickers.get(id)!, c15, c1h);
+          requireRecentCandles(c15, 15 * 60000, now);
+          requireRecentCandles(c1h, HOUR, now);
+          if (c4h) requireRecentCandles(c4h, 4 * HOUR, now);
+          // Confirmed candles only; keep the timestamp of successful indicator refresh per instrument.
+          const s = computeStats(
+            inst,
+            tickers.get(id)!,
+            c15.filter((c) => c.confirmed),
+            c1h.filter((c) => c.confirmed),
+          );
+          s.refreshedAt = now;
           if (funding && Number.isFinite(funding.rate)) {
             s.fundingPct = funding.rate * 100;
             s.fundingZ = fHist.length ? zScore(funding.rate, fHist) : null;
           }
           s.oiUsd = oi.get(id) ?? null;
           s.oiChg1hPct = this.oiChange1h(id, now);
-          if (c4h) s.trend = trendStats(c4h);
-          s.breakout = breakoutLevels(c1h, now, BREAKOUT_K);
+          if (c4h) s.trend = trendStats(c4h.filter((c) => c.confirmed));
+          s.breakout = breakoutLevels(c1h, now, this.opts.breakoutK ?? BREAKOUT_K);
           next.set(id, s);
         } catch (err) {
-          log.warn("market data failed for coin", { instId: id, err: safeError(err) });
+          log.warn("market data failed for coin", {
+            instId: id,
+            err: safeError(err),
+          });
           const old = this.stats.get(id);
           if (old) next.set(id, old);
         }
@@ -182,12 +255,27 @@ export class MarketFeed {
         for (const s of next.values()) {
           const r = readings.get(s.coin);
           if (!r || r.mentions.length < 6) continue;
-          s.newsZ = zScore(r.mentions[r.mentions.length - 1]!, r.mentions.slice(0, -1));
+          s.newsZ = zScore(
+            r.mentions[r.mentions.length - 1]!,
+            r.mentions.slice(0, -1),
+          );
           s.sentiment = r.sentiment;
         }
       }
     }
 
+    for (const s of next.values()) {
+      const t = this.tickers.get(s.instId);
+      if (t)
+        Object.assign(s, {
+          mid: t.mid,
+          last: t.last,
+          bid: t.bid,
+          ask: t.ask,
+          spreadBp: t.spreadBp,
+          vol24hUsd: t.vol24hUsd,
+        });
+    }
     this.stats = next;
     this.lastRefreshAt = now;
   }
@@ -218,14 +306,22 @@ export class MarketFeed {
 export const BREAKOUT_K = 0.5;
 
 /** Today's UTC-day open and yesterday's full range from 1h candles; null until a full previous day is available. */
-export function breakoutLevels(c1h: Candle[], now: number, k: number): { dayOpen: number; prevRange: number; trigger: number } | null {
+export function breakoutLevels(
+  c1h: Candle[],
+  now: number,
+  k: number,
+): { dayOpen: number; prevRange: number; trigger: number; dayStart: number } | null {
   const day = 86_400_000;
   const t0 = Math.floor(now / day) * day;
-  const sorted = [...c1h].sort((a, b) => a.ts - b.ts);
-  const today = sorted.filter((c) => c.ts >= t0);
-  const prev = sorted.filter((c) => c.ts >= t0 - day && c.ts < t0);
-  if (!today.length || prev.length < 20) return null;
-  const dayOpen = today[0]!.o;
+  const todayOpen = c1h.find((c) => c.ts === t0 && c.ts <= now);
+  const prev = c1h.filter((c) => c.ts >= t0 - day && c.ts < t0 && c.confirmed);
+  // A missing or duplicate hourly bar cannot define a complete previous-day range.
+  if (!todayOpen || prev.length !== 24 || !Number.isFinite(k) || k <= 0) return null;
+  const hours = new Set(prev.map((c) => c.ts));
+  for (let h = 0; h < 24; h++) if (!hours.has(t0 - day + h * HOUR)) return null;
+  if (!Number.isFinite(todayOpen.o) || todayOpen.o <= 0 || prev.some((c) =>
+    !Number.isFinite(c.h) || !Number.isFinite(c.l) || c.l <= 0 || c.h < c.l)) return null;
   const prevRange = Math.max(...prev.map((c) => c.h)) - Math.min(...prev.map((c) => c.l));
-  return { dayOpen, prevRange, trigger: dayOpen + k * prevRange };
+  if (!(prevRange > 0)) return null;
+  return { dayOpen: todayOpen.o, prevRange, trigger: todayOpen.o + k * prevRange, dayStart: t0 };
 }

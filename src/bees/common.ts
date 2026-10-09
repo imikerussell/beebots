@@ -1,9 +1,16 @@
 import type { CoinStats } from "../market/types.js";
 import type { BeeContext, Position, Side } from "./types.js";
 
-export const r2 = (x: number | null | undefined, d = 2): number | null => (x === null || x === undefined || !Number.isFinite(x) ? null : Number(x.toFixed(d)));
+export const r2 = (x: number | null | undefined, d = 2): number | null =>
+  x === null || x === undefined || !Number.isFinite(x)
+    ? null
+    : Number(x.toFixed(d));
 
-export function positionNotional(p: Position, markPx: number, ctVal: number): number {
+export function positionNotional(
+  p: Position,
+  markPx: number,
+  ctVal: number,
+): number {
   return p.contracts * ctVal * markPx;
 }
 
@@ -24,11 +31,24 @@ export const MARGIN_HEADROOM = 0.97;
 
 /** Max notional before the live ramp: min(MAX_LEVERAGE x equity x MARGIN_HEADROOM, MAX_NOTIONAL_USD_PER_BEE). */
 export function maxNotionalUsd(ctx: BeeContext): number {
-  return Math.max(0, Math.min(ctx.cfg.risk.maxLeverage * ctx.bee.equityUsd * MARGIN_HEADROOM, ctx.cfg.risk.maxNotionalUsdPerBee));
+  const cat = ctx.cfg.cats[ctx.bee.id];
+  if (cat) return Math.max(0, (ctx.bee.equityUsd * cat.maxNotionalPct) / 100);
+  return Math.max(
+    0,
+    Math.min(
+      ctx.cfg.risk.maxLeverage * ctx.bee.equityUsd * MARGIN_HEADROOM,
+      ctx.cfg.risk.maxNotionalUsdPerBee,
+    ),
+  );
 }
 
 /** ATR-multiple stop from the 15m ATR%. */
-export function atrStop(s: CoinStats | undefined, side: Side, entryPx: number, mult: number): number | null {
+export function atrStop(
+  s: CoinStats | undefined,
+  side: Side,
+  entryPx: number,
+  mult: number,
+): number | null {
   if (!s || s.atr14Pct === null) return null;
   const dist = entryPx * (s.atr14Pct / 100) * mult;
   return side === "long" ? entryPx - dist : entryPx + dist;
@@ -38,7 +58,12 @@ export function atrStop(s: CoinStats | undefined, side: Side, entryPx: number, m
  * Profit-lock stop candidate, or null below the first rung. `peakPx` is the best price since entry in the position's
  * favour; the stop keeps `keep` of the move from `entryPx` to it.
  */
-export function profitLockStop(side: Side, entryPx: number, peakPx: number, rungs: ReadonlyArray<{ atPct: number; keep: number }>): number | null {
+export function profitLockStop(
+  side: Side,
+  entryPx: number,
+  peakPx: number,
+  rungs: ReadonlyArray<{ atPct: number; keep: number }>,
+): number | null {
   const dir = side === "long" ? 1 : -1;
   const move = dir * (peakPx - entryPx);
   if (!(move > 0) || !(entryPx > 0)) return null;
@@ -49,7 +74,9 @@ export function profitLockStop(side: Side, entryPx: number, peakPx: number, rung
 }
 
 /** Shared per-bee state line for every snapshot. */
-export function beeLine(ctx: BeeContext): Record<string, number | string | null> {
+export function beeLine(
+  ctx: BeeContext,
+): Record<string, number | string | null> {
   const { bee, knobs, now } = ctx;
   const p = bee.position;
   const s = p ? ctx.view.stats.get(p.instId) : undefined;
@@ -60,8 +87,19 @@ export function beeLine(ctx: BeeContext): Record<string, number | string | null>
         usd: s && inst ? r2(positionNotional(p, s.mid, inst.ctVal), 0) : null,
         upl_r: r2(ctx.uplR, 1),
         // P&L if the stop were hit right now (the stop trails, so this can be above zero).
-        at_stop_usd: s && inst && p.stopPx !== null ? r2((p.side === "long" ? 1 : -1) * (p.stopPx - p.entryPx) * p.contracts * inst.ctVal, 0) : null,
+        at_stop_usd:
+          s && inst && p.stopPx !== null
+            ? r2(
+                (p.side === "long" ? 1 : -1) *
+                  (p.stopPx - p.entryPx) *
+                  p.contracts *
+                  inst.ctVal,
+                0,
+              )
+            : null,
         held_min: r2(minutesSince(p.openedAt, now), 0),
+        entry_trend_score: p.entryScore ?? null,
+        trend_trimmed: p.trendTrimmed ? "yes" : "no",
       }
     : { pos: "flat", flat_min: r2(minutesSince(bee.flatSince, now), 0) };
   line.trades = `${bee.tradesToday}/${knobs.maxTradesPerDay}`;

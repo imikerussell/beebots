@@ -64,5 +64,5 @@ for (const bee of BEES) {
     console.log(`${bee.padEnd(6)} ${mode} could not read OKX: ${e.code} ${e.message}`);
   }
 }
-console.log(problems ? `\nNOT FLAT: ${problems} bee(s) hold a position or pending order, or could not be read` : `\nall bees flat on OKX ${mode}, nothing pending`);
+console.log(problems ? `\nNOT FLAT: ${problems} cat(s) hold a position or pending order, or could not be read` : `\nboth cats flat on OKX ${mode}, nothing pending`);
 process.exit(problems ? 1 : 0);

@@ -8,13 +8,18 @@ export class Alerts {
   constructor(private url: string | undefined) {}
 
   send(text: string, now = Date.now()): void {
-    const t = redactString(`[beebots] ${text}`);
+    const t = redactString(`[Catfolio] ${text}`);
     log.warn("alert", { text: t });
     if (!this.url) return;
     const last = this.sent.get(t);
     if (last && now - last < 10 * 60_000) return;
     this.sent.set(t, now);
-    fetch(this.url, { method: "POST", body: t, headers: { "content-type": "text/plain" }, signal: AbortSignal.timeout(5000) }).catch((err) =>
+    fetch(this.url, {
+      method: "POST",
+      body: t,
+      headers: { "content-type": "text/plain" },
+      signal: AbortSignal.timeout(5000),
+    }).catch((err) =>
       log.warn("alert webhook failed", { err: safeError(err) }),
     );
   }

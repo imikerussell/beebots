@@ -1,7 +1,16 @@
 import type { Db } from "./db.js";
 import { redact } from "./redact.js";
 
-export type EventType = "decision" | "order" | "fill" | "funding" | "equity" | "cap" | "recon" | "heartbeat" | "status" | "keeper";
+export type EventType =
+  | "decision"
+  | "order"
+  | "fill"
+  | "funding"
+  | "equity"
+  | "cap"
+  | "recon"
+  | "heartbeat"
+  | "status";
 
 export interface BeeEvent {
   type: EventType;
@@ -17,10 +26,15 @@ export class EventBus {
 
   constructor(private db: Db | null) {}
 
-  emit(type: EventType, data: Record<string, unknown>, ts = Date.now()): BeeEvent {
+  emit(
+    type: EventType,
+    data: Record<string, unknown>,
+    ts = Date.now(),
+  ): BeeEvent {
     const ev = redact({ type, ts, ...data }) as BeeEvent;
     const line = JSON.stringify(ev);
-    if (this.db && type !== "equity" && type !== "heartbeat") this.db.insertEvent(ts, type, line);
+    if (this.db && type !== "equity" && type !== "heartbeat")
+      this.db.insertEvent(ts, type, line);
     for (const l of this.listeners) l(line, ev);
     return ev;
   }

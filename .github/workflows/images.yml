@@ -1,7 +1,4 @@
-# Builds the three images that docker-compose.yml pulls, for amd64 (Hostinger VPS) and arm64.
-# A release tag (v2026.09.25) publishes :latest and :2026.09.25, which is what installs run; the dashboard shows
-# "Update available" when a newer release exists. A push to main only publishes :edge, so installs never get
-# unreleased code.
+# Optional CI builds for the two supported architectures; local Compose builds these images itself.
 name: images
 on:
   push:
@@ -46,7 +43,7 @@ jobs:
         run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
       - id: tags
         env:
-          IMG: ghcr.io/${{ steps.owner.outputs.lc }}/beebots-${{ matrix.name }}
+          IMG: ghcr.io/${{ steps.owner.outputs.lc }}/catfolio-${{ matrix.name }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             v="${GITHUB_REF_NAME#v}"

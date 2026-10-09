@@ -16,12 +16,15 @@ function coinStats(ctx: BeeContext): CoinStats[] {
 const sideOf = (score: number): Side => (score >= 0 ? "long" : "short");
 
 /** max(0.5, |score|/9) of max notional, capped so the position stays under 60% annualised vol. */
-export function breezySizeFrac(s: CoinStats | undefined, ctx: BeeContext): number {
+export function breezySizeFrac(
+  s: CoinStats | undefined, ctx: BeeContext,
+  tuning = { volTargetPct: VOL_TARGET_PCT, sizeFloorFrac: SIZE_FLOOR_FRAC },
+): number {
   if (!s?.trend) return 0;
-  const byScore = Math.max(SIZE_FLOOR_FRAC, Math.abs(s.trend.score) / 9);
+  const byScore = Math.max(tuning.sizeFloorFrac, Math.abs(s.trend.score) / 9);
   const max = maxNotionalUsd(ctx);
   const rv = s.trend.rv90Pct;
-  const volCap = rv && rv > 0 && max > 0 ? (ctx.bee.equityUsd * (VOL_TARGET_PCT / rv)) / max : 1;
+  const volCap = rv && rv > 0 && max > 0 ? (ctx.bee.equityUsd * (tuning.volTargetPct / rv)) / max : 1;
   return Math.max(0, Math.min(byScore, volCap, 1));
 }
 

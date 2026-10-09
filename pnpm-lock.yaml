@@ -11,9 +11,6 @@ importers:
       '@okx_ai/okx-trade-cli':
         specifier: 1.4.8
         version: 1.4.8
-      '@typesafe-ai/sdk':
-        specifier: 0.6.0
-        version: 0.6.0
       zod:
         specifier: ^3.25.0
         version: 3.25.76
@@ -423,10 +420,6 @@ packages:
 
   '@types/node@22.20.4':
     resolution: {integrity: sha512-zJRE40jpHtKqE/C4fgHrAKQLJuSpzEnP9ff9Y7YtoR3Wd2pwqzlekDeEuUQXjRd+QCYnVnNwuJYmhdk9XV8gvA==}
-
-  '@typesafe-ai/sdk@0.6.0':
-    resolution: {integrity: sha512-IddX+Q0XM+VagOUZFeP7wZjaO4SHMdvnh2zEBdrZZnXedWI3BNK1lKhMx3ayrkFWvVLbVcUHJy6AVZlY+e6Jaw==}
-    engines: {node: '>=20'}
 
   '@typescript-eslint/eslint-plugin@8.70.1':
     resolution: {integrity: sha512-nDNrUQ/4ruSNYbu749TRY7cfrzPtoLHEXSNBI8aaNY32LlZCajixqRf3FqcKC4p5Cam4VOHYx/t+i5+nKXvrqA==}
@@ -1298,8 +1291,6 @@ snapshots:
   '@types/node@22.20.4':
     dependencies:
       undici-types: 6.21.0
-
-  '@typesafe-ai/sdk@0.6.0': {}
 
   '@typescript-eslint/eslint-plugin@8.70.1(@typescript-eslint/parser@8.70.1(eslint@9.39.5)(typescript@5.9.3))(eslint@9.39.5)(typescript@5.9.3)':
     dependencies:

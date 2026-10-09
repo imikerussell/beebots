@@ -1,3 +1,5 @@
+> **Preserved upstream reference, not the active Catfolio rules.** Leverage, forced exposure and add/rebalance behavior described below are historical. Read [Catfolio strategies](CATFOLIO.md) for the active Mochi/Tiger adaptations.
+
 # Breezy Bee: the calculated one
 
 > **Live rules since 2026-09-24:** size = max(0.5, |score|/9) x max notional, under a 60% annualised vol cap (was |score|/9 under 25%). So she always holds at least 1x equity. SIZE_UP is offered when she is more than 25% of max below target. 3 trades a day, fee budget $1.00.

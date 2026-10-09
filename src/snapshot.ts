@@ -1,4 +1,4 @@
-// Per-bee numeric snapshot for Jev. Numbers only, columnar, target < 400 input tokens.
+// Compact numeric market state shared with a provider-neutral decision model.
 import { createHash } from "node:crypto";
 import { beeLine } from "./bees/common.js";
 import type { BeeBrain, BeeContext } from "./bees/types.js";
@@ -28,7 +28,8 @@ export function buildSnapshot(brain: BeeBrain, ctx: BeeContext): Snapshot {
     me: beeLine(ctx),
     coins: { cols, rows },
   };
-  if (brain.id === "boozy") state.attn = ctx.view.newsAvailable ? "news_z" : "volume_z";
+  if (brain.id === "boozy")
+    state.attn = ctx.view.newsAvailable ? "news_z" : "volume_z";
   const json = JSON.stringify(state);
   return {
     state,

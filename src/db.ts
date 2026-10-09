@@ -58,6 +58,7 @@ export interface DecisionRow {
   vetoedBy: string | null;
   forcedBy: string | null;
   status: string;
+  auditJson?: string;
 }
 
 export interface OrderRow {
@@ -83,41 +84,105 @@ export interface FillRow {
   notionalUsd: number;
   feeUsd: number;
   realisedUsd: number;
-}
-
-/** A fill as the Hive sees it (hive.ts): base-asset quantity, no order ids, no account data. */
-export interface HiveFill {
-  slot: string;
-  instId: string;
-  side: "buy" | "sell";
-  qty: number;
-  px: number;
-  ts: number;
-  feeUsd: number;
-  reduceOnly: boolean;
+  slippageUsd?: number;
 }
 
 export class Db {
   readonly raw: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(path: string, readOnly = false) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    this.raw = new DatabaseSync(path);
-    this.raw.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
+    this.raw = new DatabaseSync(path, { readOnly });
+    if (readOnly) {
+      if (this.getMeta("product") !== "catfolio-1") {
+        this.raw.close();
+        throw new Error("Not a Catfolio database");
+      }
+      return;
+    }
+    const old = this.raw
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='bee_state'",
+      )
+      .get();
+    if (old) {
+      const ids = this.raw
+        .prepare(
+          "SELECT bee FROM bee_state UNION SELECT bee FROM decisions UNION SELECT bee FROM fills",
+        )
+        .all() as Array<{ bee: string }>;
+      const product = this.raw
+        .prepare("SELECT v FROM meta WHERE k='product'")
+        .get() as { v: string } | undefined;
+      if (
+        ids.some((r) => !["tiger", "mochi"].includes(r.bee)) ||
+        product?.v !== "catfolio-1"
+      ) {
+        this.raw.close();
+        throw new Error(
+          "Incompatible historical database. Preserve this file and choose a new DB_PATH for Catfolio; no migration or deletion was performed.",
+        );
+      }
+    }
+    this.raw.exec(
+      "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;",
+    );
     this.raw.exec(SCHEMA);
+    if (!old) this.setMeta("product", "catfolio-1");
+    const addColumn = (table: string, column: string, definition: string) => {
+      const columns = this.raw
+        .prepare(`PRAGMA table_info(${table})`)
+        .all() as Array<{ name: string }>;
+      if (!columns.some((c) => c.name === column))
+        this.raw.exec(
+          `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`,
+        );
+    };
+    addColumn("decisions", "audit_json", "TEXT");
+    addColumn("fills", "slippage_usd", "REAL NOT NULL DEFAULT 0");
+    this.raw.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS execution_once ON orders(decision_id, bee, purpose)",
+    );
+  }
+
+  transaction<T>(fn: () => T): T {
+    this.raw.exec("BEGIN IMMEDIATE");
+    try {
+      const value = fn();
+      this.raw.exec("COMMIT");
+      return value;
+    } catch (err) {
+      this.raw.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   insertDecision(d: DecisionRow): number {
     const r = this.raw
       .prepare(
         `INSERT INTO decisions (bee, ts, state_hash, state_json, menu_json, choice, probabilities_json, confidence, conviction,
-          latency_ms, input_tokens, jev_cost_usd, jev_error, action_json, vetoed_by, forced_by, status)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          latency_ms, input_tokens, jev_cost_usd, jev_error, action_json, vetoed_by, forced_by, status, audit_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        d.bee, d.ts, d.stateHash, d.stateJson, d.menuJson, d.choice, d.probabilities ? JSON.stringify(d.probabilities) : null,
-        d.confidence, d.conviction, d.latencyMs, d.inputTokens, d.jevCostUsd, d.jevError, JSON.stringify(d.action),
-        d.vetoedBy, d.forcedBy, d.status,
+        d.bee,
+        d.ts,
+        d.stateHash,
+        d.stateJson,
+        d.menuJson,
+        d.choice,
+        d.probabilities ? JSON.stringify(d.probabilities) : null,
+        d.confidence,
+        d.conviction,
+        d.latencyMs,
+        d.inputTokens,
+        d.jevCostUsd,
+        d.jevError,
+        JSON.stringify(d.action),
+        d.vetoedBy,
+        d.forcedBy,
+        d.status,
+        d.auditJson ?? null,
       );
     return Number(r.lastInsertRowid);
   }
@@ -128,90 +193,142 @@ export class Db {
         `INSERT INTO orders (decision_id, bee, ts, cl_ord_id, inst_id, side, contracts, reduce_only, purpose, state)
          VALUES (?,?,?,?,?,?,?,?,?,'sent')`,
       )
-      .run(o.decisionId, o.bee, o.ts, o.clOrdId, o.instId, o.side, o.contracts, o.reduceOnly ? 1 : 0, o.purpose);
+      .run(
+        o.decisionId,
+        o.bee,
+        o.ts,
+        o.clOrdId,
+        o.instId,
+        o.side,
+        o.contracts,
+        o.reduceOnly ? 1 : 0,
+        o.purpose,
+      );
     return Number(r.lastInsertRowid);
   }
 
-  updateOrder(id: number, state: string, ordId: string | null, error: string | null): void {
-    this.raw.prepare(`UPDATE orders SET state = ?, ord_id = COALESCE(?, ord_id), error = ? WHERE id = ?`).run(state, ordId, error, id);
+  updateOrder(
+    id: number,
+    state: string,
+    ordId: string | null,
+    error: string | null,
+  ): void {
+    this.raw
+      .prepare(
+        `UPDATE orders SET state = ?, ord_id = COALESCE(?, ord_id), error = ? WHERE id = ?`,
+      )
+      .run(state, ordId, error, id);
   }
 
   insertFill(f: FillRow): void {
     this.raw
-      .prepare(`INSERT INTO fills (order_id, bee, ts, inst_id, side, contracts, px, notional_usd, fee_usd, realised_usd) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-      .run(f.orderId, f.bee, f.ts, f.instId, f.side, f.contracts, f.px, f.notionalUsd, f.feeUsd, f.realisedUsd);
-  }
-
-  /**
-   * Every fill since `sinceTs`, oldest first, at most `limit`. Base-asset qty = contracts x ctVal, which is
-   * notional / px (the engine records notional = contracts x ctVal x px), so no instrument lookup is needed.
-   */
-  hiveFills(sinceTs: number, limit: number): HiveFill[] {
-    const rows = this.raw
       .prepare(
-        `SELECT f.bee, f.inst_id AS instId, f.side, f.notional_usd AS notional, f.px, f.ts, f.fee_usd AS fee, COALESCE(o.reduce_only, 0) AS ro
-         FROM fills f LEFT JOIN orders o ON o.id = f.order_id WHERE f.ts >= ? ORDER BY f.ts, f.id LIMIT ?`,
+        `INSERT INTO fills (order_id, bee, ts, inst_id, side, contracts, px, notional_usd, fee_usd, realised_usd, slippage_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .all(sinceTs, limit) as Array<{ bee: string; instId: string; side: "buy" | "sell"; notional: number; px: number; ts: number; fee: number; ro: number }>;
-    return rows
-      .filter((r) => r.px > 0)
-      .map((r) => ({
-        slot: r.bee,
-        instId: r.instId,
-        side: r.side,
-        qty: Number((Math.abs(r.notional) / r.px).toPrecision(12)),
-        px: r.px,
-        ts: r.ts,
-        feeUsd: Number(r.fee.toFixed(6)),
-        reduceOnly: r.ro === 1,
-      }));
+      .run(
+        f.orderId,
+        f.bee,
+        f.ts,
+        f.instId,
+        f.side,
+        f.contracts,
+        f.px,
+        f.notionalUsd,
+        f.feeUsd,
+        f.realisedUsd,
+        f.slippageUsd ?? 0,
+      );
   }
 
   /** Returns false if this bill was already recorded. */
-  insertFunding(bee: BeeId, ts: number, instId: string | null, amountUsd: number, billId: string): boolean {
-    const r = this.raw.prepare(`INSERT OR IGNORE INTO funding (bee, ts, inst_id, amount_usd, bill_id) VALUES (?,?,?,?,?)`).run(bee, ts, instId, amountUsd, billId);
+  insertFunding(
+    bee: BeeId,
+    ts: number,
+    instId: string | null,
+    amountUsd: number,
+    billId: string,
+  ): boolean {
+    const r = this.raw
+      .prepare(
+        `INSERT OR IGNORE INTO funding (bee, ts, inst_id, amount_usd, bill_id) VALUES (?,?,?,?,?)`,
+      )
+      .run(bee, ts, instId, amountUsd, billId);
     return Number(r.changes) > 0;
   }
 
-  insertEquity(bee: BeeId, ts: number, equity: number, cash: number, upl: number): void {
-    this.raw.prepare(`INSERT INTO equity_snapshots (bee, ts, equity_usd, cash_usd, upl_usd) VALUES (?,?,?,?,?)`).run(bee, ts, equity, cash, upl);
+  insertEquity(
+    bee: BeeId,
+    ts: number,
+    equity: number,
+    cash: number,
+    upl: number,
+  ): void {
+    this.raw
+      .prepare(
+        `INSERT INTO equity_snapshots (bee, ts, equity_usd, cash_usd, upl_usd) VALUES (?,?,?,?,?)`,
+      )
+      .run(bee, ts, equity, cash, upl);
   }
 
   /** Equity per bee, bucketed to at most ~`points` samples (last value in each bucket). */
-  equitySeries(sinceTs: number, points: number): Record<string, Array<[number, number]>> {
+  equitySeries(
+    sinceTs: number,
+    points: number,
+  ): Record<string, Array<[number, number]>> {
     const span = Math.max(1, Date.now() - sinceTs);
     const bucket = Math.max(10_000, Math.ceil(span / points));
     const rows = this.raw
-      .prepare(`SELECT bee, MAX(ts) AS ts, equity_usd AS eq FROM equity_snapshots WHERE ts >= ? GROUP BY bee, ts / ? ORDER BY ts`)
+      .prepare(
+        `SELECT bee, MAX(ts) AS ts, equity_usd AS eq FROM equity_snapshots WHERE ts >= ? GROUP BY bee, ts / ? ORDER BY ts`,
+      )
       .all(sinceTs, bucket) as Array<{ bee: string; ts: number; eq: number }>;
     const out: Record<string, Array<[number, number]>> = {};
-    for (const r of rows) (out[r.bee] ??= []).push([r.ts, Number(r.eq.toFixed(2))]);
+    for (const r of rows)
+      (out[r.bee] ??= []).push([r.ts, Number(r.eq.toFixed(2))]);
     return out;
   }
 
   insertRecon(bee: BeeId, ts: number, ok: boolean, diff: unknown): void {
-    this.raw.prepare(`INSERT INTO reconciliations (ts, bee, ok, diff_json) VALUES (?,?,?,?)`).run(ts, bee, ok ? 1 : 0, JSON.stringify(diff));
+    this.raw
+      .prepare(
+        `INSERT INTO reconciliations (ts, bee, ok, diff_json) VALUES (?,?,?,?)`,
+      )
+      .run(ts, bee, ok ? 1 : 0, JSON.stringify(diff));
   }
 
   insertCap(bee: BeeId, ts: number, cap: string, detail: string): void {
-    this.raw.prepare(`INSERT INTO caps (ts, bee, cap, detail) VALUES (?,?,?,?)`).run(ts, bee, cap, detail);
+    this.raw
+      .prepare(`INSERT INTO caps (ts, bee, cap, detail) VALUES (?,?,?,?)`)
+      .run(ts, bee, cap, detail);
   }
 
   saveBee(s: BeeState, ts: number): void {
-    this.raw.prepare(`INSERT INTO bee_state (bee, json, updated_ts) VALUES (?,?,?) ON CONFLICT(bee) DO UPDATE SET json = excluded.json, updated_ts = excluded.updated_ts`).run(s.id, JSON.stringify(s), ts);
+    this.raw
+      .prepare(
+        `INSERT INTO bee_state (bee, json, updated_ts) VALUES (?,?,?) ON CONFLICT(bee) DO UPDATE SET json = excluded.json, updated_ts = excluded.updated_ts`,
+      )
+      .run(s.id, JSON.stringify(s), ts);
   }
 
   loadBee(bee: BeeId): BeeState | null {
-    const row = this.raw.prepare(`SELECT json FROM bee_state WHERE bee = ?`).get(bee) as { json: string } | undefined;
+    const row = this.raw
+      .prepare(`SELECT json FROM bee_state WHERE bee = ?`)
+      .get(bee) as { json: string } | undefined;
     return row ? (JSON.parse(row.json) as BeeState) : null;
   }
 
   insertEvent(ts: number, type: string, json: string): void {
-    this.raw.prepare(`INSERT INTO events (ts, type, json) VALUES (?,?,?)`).run(ts, type, json);
+    this.raw
+      .prepare(`INSERT INTO events (ts, type, json) VALUES (?,?,?)`)
+      .run(ts, type, json);
   }
 
   recentEvents(n: number): string[] {
-    const rows = this.raw.prepare(`SELECT json FROM (SELECT id, json FROM events ORDER BY id DESC LIMIT ?) ORDER BY id ASC`).all(n) as Array<{ json: string }>;
+    const rows = this.raw
+      .prepare(
+        `SELECT json FROM (SELECT id, json FROM events ORDER BY id DESC LIMIT ?) ORDER BY id ASC`,
+      )
+      .all(n) as Array<{ json: string }>;
     return rows.map((r) => r.json);
   }
 
@@ -219,18 +336,19 @@ export class Db {
     this.raw.prepare(`DELETE FROM events WHERE ts < ?`).run(olderThanTs);
   }
 
-  jevSpendSince(ts: number): number {
-    const r = this.raw.prepare(`SELECT COALESCE(SUM(jev_cost_usd), 0) AS s FROM decisions WHERE ts >= ?`).get(ts) as { s: number };
-    return r.s;
-  }
-
   getMeta(k: string): string | null {
-    const r = this.raw.prepare(`SELECT v FROM meta WHERE k = ?`).get(k) as { v: string } | undefined;
+    const r = this.raw.prepare(`SELECT v FROM meta WHERE k = ?`).get(k) as
+      | { v: string }
+      | undefined;
     return r?.v ?? null;
   }
 
   setMeta(k: string, v: string): void {
-    this.raw.prepare(`INSERT INTO meta (k, v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`).run(k, v);
+    this.raw
+      .prepare(
+        `INSERT INTO meta (k, v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
+      )
+      .run(k, v);
   }
 
   close(): void {

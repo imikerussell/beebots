@@ -7,7 +7,18 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: Object.fromEntries(["/events", "/snapshot", "/history", "/equity", "/visit", "/health", "/profile", "/bee-image", "/setup", "/hive", "/keeper"].map((p) => [p, { target: engine, changeOrigin: false }])),
+    proxy: Object.fromEntries(
+      [
+        "/events",
+        "/snapshot",
+        "/history",
+        "/equity",
+        "/visit",
+        "/health",
+        "/profile",
+        "/report",
+      ].map((p) => [p, { target: engine, changeOrigin: false }]),
+    ),
   },
   build: { outDir: "dist", sourcemap: false, target: "es2022" },
 });

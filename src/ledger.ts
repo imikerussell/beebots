@@ -16,8 +16,21 @@ export function freshBee(id: BeeId, equityUsd: number, now: number): BeeState {
     tradesToday: 0,
     feesTodayUsd: 0,
     lastOrderAt: null,
+    lastEntryAt: null,
+    peakEquityUsd: equityUsd,
+    maxDrawdownPct: 0,
+    exposedMs: 0,
+    metricsAt: now,
+    slippageUsd: 0,
     cap: null,
-    totals: { feesUsd: 0, fundingUsd: 0, jevUsd: 0, realisedUsd: 0, decisions: 0, orders: 0 },
+    totals: {
+      feesUsd: 0,
+      fundingUsd: 0,
+      jevUsd: 0,
+      realisedUsd: 0,
+      decisions: 0,
+      orders: 0,
+    },
     top1: { coin: null, streak: 0, rankedAt: 0 },
   };
 }
@@ -51,7 +64,8 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
     bee.flatSince = null;
     return 0;
   }
-  if (p.instId !== f.instId) throw new Error(`fill for ${f.coin} while holding ${p.coin}`);
+  if (p.instId !== f.instId)
+    throw new Error(`fill for ${f.coin} while holding ${p.coin}`);
   const pDir = p.side === "long" ? 1 : -1;
   if (dir === pDir) {
     // add: weighted average entry
@@ -60,7 +74,8 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
     p.contracts = total;
     // An add makes the position bigger, so 1R grows with it (it used to stay at the first fill's risk).
     const initStop = p.initialStopPx ?? p.stopPx;
-    if (initStop !== null && initStop !== undefined) p.riskUsd = sizedRiskUsd(total, f.ctVal, p.entryPx, initStop);
+    if (initStop !== null && initStop !== undefined)
+      p.riskUsd = sizedRiskUsd(total, f.ctVal, p.entryPx, initStop);
     return 0;
   }
   // reduce / close
@@ -68,7 +83,8 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
   realised = pDir * (f.px - p.entryPx) * closed * f.ctVal;
   bee.cashUsd += realised;
   bee.totals.realisedUsd += realised;
-  p.riskUsd = p.contracts > 0 ? p.riskUsd * ((p.contracts - closed) / p.contracts) : 0;
+  p.riskUsd =
+    p.contracts > 0 ? p.riskUsd * ((p.contracts - closed) / p.contracts) : 0;
   p.contracts = Number((p.contracts - closed).toFixed(8));
   if (p.contracts <= 0) {
     bee.position = null;
@@ -83,7 +99,12 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
 }
 
 /** USD lost if the whole position exits at `stopPx` from its average entry. */
-export function sizedRiskUsd(contracts: number, ctVal: number, entryPx: number, stopPx: number): number {
+export function sizedRiskUsd(
+  contracts: number,
+  ctVal: number,
+  entryPx: number,
+  stopPx: number,
+): number {
   return Math.abs(contracts * ctVal * (entryPx - stopPx));
 }
 
@@ -106,9 +127,18 @@ export function applyFunding(bee: BeeState, amountUsd: number): void {
 }
 
 /** Mark to market at `markPx`. */
-export function mark(bee: BeeState, markPx: number | undefined, ctVal: number | undefined): void {
+export function mark(
+  bee: BeeState,
+  markPx: number | undefined,
+  ctVal: number | undefined,
+): void {
   const p = bee.position;
-  bee.uplUsd = p && markPx && ctVal ? uplUsd(p, markPx, ctVal) : bee.position ? bee.uplUsd : 0;
+  bee.uplUsd =
+    p && markPx && ctVal
+      ? uplUsd(p, markPx, ctVal)
+      : bee.position
+        ? bee.uplUsd
+        : 0;
   bee.equityUsd = bee.cashUsd + bee.uplUsd;
 }
 

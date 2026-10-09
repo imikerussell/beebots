@@ -11,20 +11,45 @@ function decimals(x: number): number {
  * contracts = floor(notional / (ctVal x price) / lotSz) x lotSz, and it must be >= minSz.
  * Returns 0 when it rounds below the minimum (the caller skips the trade and logs why).
  */
-export function contractsFor(notionalUsd: number, inst: Pick<Instrument, "ctVal" | "lotSz" | "minSz">, px: number): number {
-  if (!(notionalUsd > 0) || !(px > 0) || !(inst.ctVal > 0) || !(inst.lotSz > 0)) return 0;
+export function contractsFor(
+  notionalUsd: number,
+  inst: Pick<Instrument, "ctVal" | "lotSz" | "minSz">,
+  px: number,
+): number {
+  if (
+    !(notionalUsd > 0) ||
+    !(px > 0) ||
+    !(inst.ctVal > 0) ||
+    !(inst.lotSz > 0) ||
+    !(inst.minSz > 0) ||
+    ![notionalUsd, px, inst.ctVal, inst.lotSz, inst.minSz].every(
+      Number.isFinite,
+    )
+  )
+    return 0;
   const raw = notionalUsd / (inst.ctVal * px);
   const lots = Math.floor(raw / inst.lotSz + 1e-9);
   const n = Number((lots * inst.lotSz).toFixed(decimals(inst.lotSz)));
-  return n >= inst.minSz ? n : 0;
+  // Floating-point tolerance must never round UP beyond a budget.
+  const safe =
+    n * inst.ctVal * px > notionalUsd
+      ? Number((n - inst.lotSz).toFixed(decimals(inst.lotSz)))
+      : n;
+  return safe >= inst.minSz ? safe : 0;
 }
 
 /** Round a contract count down to the lot size (for partial closes). */
-export function roundToLot(contracts: number, inst: Pick<Instrument, "lotSz">): number {
+export function roundToLot(
+  contracts: number,
+  inst: Pick<Instrument, "lotSz">,
+): number {
   const lots = Math.floor(contracts / inst.lotSz + 1e-9);
   return Number((lots * inst.lotSz).toFixed(decimals(inst.lotSz)));
 }
 
-export function formatSz(contracts: number, inst: Pick<Instrument, "lotSz">): string {
+export function formatSz(
+  contracts: number,
+  inst: Pick<Instrument, "lotSz">,
+): string {
   return contracts.toFixed(decimals(inst.lotSz));
 }

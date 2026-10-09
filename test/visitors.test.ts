@@ -17,13 +17,21 @@ describe("visitor counter", () => {
   it("persists only the total, never an address or a hash", () => {
     const db = new Db(":memory:");
     new Visitors(db).visit("203.0.113.9");
-    const meta = db.raw.prepare("SELECT k, v FROM meta").all() as Array<{ k: string; v: string }>;
-    expect(meta).toEqual([{ k: "visitors_total", v: "1" }]);
+    const meta = db.raw.prepare("SELECT k, v FROM meta").all() as Array<{
+      k: string;
+      v: string;
+    }>;
+    expect(meta).toEqual([
+      { k: "product", v: "catfolio-1" },
+      { k: "visitors_total", v: "1" },
+    ]);
     expect(new Visitors(db).total).toBe(1);
   });
 
   it("uses the first X-Forwarded-For hop from Caddy", () => {
-    expect(clientAddr("198.51.100.7, 172.18.0.3", "172.18.0.3")).toBe("198.51.100.7");
+    expect(clientAddr("198.51.100.7, 172.18.0.3", "172.18.0.3")).toBe(
+      "198.51.100.7",
+    );
     expect(clientAddr(undefined, "172.18.0.3")).toBe("172.18.0.3");
   });
 });
