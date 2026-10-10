@@ -102,6 +102,26 @@ The dashboard labels **Local inference** or **Jev cloud**. Reports include backe
 
 Jev compatibility is covered by a credential-free mock HTTP server. No paid Jev inference was performed during this implementation; run `pnpm provider:check` with your key to verify it.
 
+## Daily strategy coach
+
+The dashboard includes an AI coach inspired by the original Beekeeper. The upstream implementation used a scheduled Zapier workflow, a scorecard, short-lived rewrite credentials, and strategy overlays. Catfolio now reviews each cat separately through Vercel and requires **Accept suggestion** before applying a change.
+
+Use your existing `AI_GATEWAY_API_KEY` on the engine. The coach automatically enables when that key is present, independently of `DECISION_PROVIDER`. Set `COACH_ENABLED=false` to disable new reviews. Its separate text model defaults to `COACH_MODEL=anthropic/claude-sonnet-4.6`; Jev remains the trading decision model when selected. Requests use Vercel's [OpenAI-compatible chat API](https://vercel.com/docs/ai-gateway/openai-compat/rest-api). Coaching calls are billed through Vercel separately from the Jev spending estimate/cap, with at most two bounded requests per 24 hours for this database.
+
+To enable dashboard approvals:
+
+1. Generate a separate owner key with `openssl rand -hex 32` and put it in the engine's `.env` as `COACH_ADMIN_TOKEN` (minimum 24 characters).
+2. Rebuild and restart the engine and dashboard. With Docker: `docker compose up -d --build`.
+3. Enter that owner key in **Daily strategy coach** on the dashboard. It stays in page memory and is sent only to the engine for review actions. Never enter your Vercel API key in the dashboard. Use HTTPS if exposing the dashboard beyond localhost.
+
+The first review needs at least an hour of observations and 30 model decisions. Each cat gets at most one attempt per rolling 24 hours and per UTC day, including failures and restarts. Reviews summarize the previous 24 hours: WAIT versus HOLD, menus offering only WAIT, entry blockers from the same checks that build the trading menu, model failures, risk vetoes, fills, current portfolio, and market conditions. Only this scoped trading evidence and strategy facts go to the review model; credentials and full configuration do not. Insufficient evidence waits; unavailable providers produce a visible failed review and retry at the next daily opportunity. Closed experiments stop coaching.
+
+The coach can recommend **no change**, or one bounded adjustment to minimum trend score, action probability, or conviction. Each proposal includes an explanation, exact before/after value, and downside. Changes must have matching blocker evidence and pass server validation. Trend and conviction move at most one point per review and one point from the original settings. Action probability stays within 50–95%, changes by at most five percentage points, and stays within ten percentage points of the original setting. Stops, loss limits, position sizes, fees, cooldowns, entry caps, permitted coins, breakout confirmation and exit rules cannot be rewritten. Waiting alone does not justify relaxing rules.
+
+**Accept suggestion** persists the approved threshold in the run database and updates the next decision without a restart or immediate order. Acceptance is refused while the cat holds a position, after settings change, or after the suggestion expires (24 hours). **Decline** records your decision without changing settings. **Restore original thresholds** clears all coach adjustments for that cat. In-flight model decisions from older settings are discarded. Accepted settings persist until restored; explicit changes to the three original threshold environment values take precedence on restart. The dashboard shows current effective values and recent review history; complete review and approval records remain in SQLite.
+
+Read access remains public (`GET /coach` and the snapshot). `POST /coach/accept`, `/coach/decline`, and `/coach/reset` require the separate owner bearer key and a JSON body. The gateway credential is never served to the browser.
+
 ## LM Studio and Nimble 9B
 
 The LM Studio integration uses only the documented [`POST /v1/systemone`](https://lmstudio.ai/docs/developer/jev-compat/systemone): an exact-menu `choice` and a four-level ordered `score`. It checks the loaded model through [`GET /api/v1/models`](https://lmstudio.ai/docs/developer/rest/list) before every inference request. The selected instance must be advertised as a **GGUF decision model**. Unloaded models fail closed; Catfolio does not load a replacement.

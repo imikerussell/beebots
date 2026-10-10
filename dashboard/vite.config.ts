@@ -17,6 +17,7 @@ export default defineConfig({
         "/health",
         "/profile",
         "/report",
+        "/coach",
       ].map((p) => [p, { target: engine, changeOrigin: false }]),
     ),
   },

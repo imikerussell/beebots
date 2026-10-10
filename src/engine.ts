@@ -1,5 +1,6 @@
 import { decisionConfiguration } from "./providers.js";
-import { catBrain } from "./cats.js";
+import { CatCoach, coachRevision } from "./coach.js";
+import { catBrain, entryDiagnostics } from "./cats.js";
 import { positionNotional } from "./bees/common.js";
 import type {
   Action,
@@ -51,8 +52,10 @@ export interface EngineDeps {
   alerts: Alerts;
   now?: () => number;
   closeRequested?: () => boolean;
+  coachFetch?: typeof fetch;
 }
 export class Engine {
+  readonly coach: CatCoach;
   readonly bees = {} as Record<BeeId, BeeState>;
   private last: Partial<
     Record<
@@ -92,6 +95,12 @@ export class Engine {
     this.now = d.now ?? Date.now;
     this.startedAt = this.now();
     this.lastFundingSlot = fundingSlot(this.startedAt);
+    this.coach = new CatCoach({ cfg: d.cfg, db: d.db, now: this.now, fetch: d.coachFetch,
+      closed: () => this.stopped || this.closedAt !== null || !!d.closeRequested?.(),
+      hasPosition: (id) => !!this.bees[id]?.position,
+      changed: (id) => { delete this.brains[id]; },
+      context: (id) => ({ account: this.publicBee(id), diagnostics: entryDiagnostics(id, this.ctx(id)), marketUpdatedAt: d.feed.lastRefreshAt }),
+    });
   }
 
   async start(): Promise<void> {
@@ -154,6 +163,7 @@ export class Engine {
       model: decisionConfiguration(cfg).model,
     });
     await this.protectiveTick();
+    this.loop(() => this.coach.tick(), 60_000);
     this.loop(() => this.tick(), cfg.tickMs);
     this.loop(() => this.protectiveTick(), cfg.protectiveMs);
     this.loop(() => this.refreshMarket(), cfg.dataRefreshMs);
@@ -162,6 +172,7 @@ export class Engine {
     this.stopped = true;
     for (const t of this.timers) clearTimeout(t);
     this.d.provider.close?.();
+    await this.coach.stop();
     await Promise.allSettled([...this.pending]);
     for (const id of BEES)
       if (this.bees[id]) this.d.db.saveBee(this.bees[id], this.now());
@@ -336,6 +347,7 @@ export class Engine {
         menu = brain.menu(ctx);
       const snap = buildSnapshot(brain, ctx);
       const before = this.positionVersion(id);
+      const rulesBefore = coachRevision(this.d.cfg, id);
       const audit = this.auditInputs(id, now);
       let r: DecisionResult;
       try {
@@ -357,7 +369,7 @@ export class Engine {
         this.closedAt !== null ||
         this.d.closeRequested?.() ||
         this.now() - now > this.d.cfg.maxDecisionAgeMs ||
-        before !== this.positionVersion(id);
+        before !== this.positionVersion(id) || rulesBefore !== coachRevision(this.d.cfg, id);
       this.markBee(id, this.now());
       const selected =
         r.ok && Object.hasOwn(menu, r.choice) ? menu[r.choice] : undefined;
@@ -405,6 +417,7 @@ export class Engine {
         at: now,
         strategyVersion: STRATEGY_VERSION,
         rubricVersion: RUBRIC_VERSION,
+        entryDiagnostics: ctx.bee.position ? [] : entryDiagnostics(id, ctx),
         strategy: brain.strategy,
         rubric: brain.convictionLabels,
         state: buildSnapshot(brain, ctx).state,
@@ -1094,6 +1107,7 @@ export class Engine {
       protectiveIntervalMs: this.d.cfg.protectiveMs,
       cats: BEES.map((id) => this.publicBee(id)),
       inference: this.d.provider.status(),
+      coach: this.coach.state(),
       market: { refreshedAt: this.d.feed.lastRefreshAt },
       recon: this.recon,
     };

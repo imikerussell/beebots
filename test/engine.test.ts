@@ -49,6 +49,7 @@ async function harness(
     executor?: (sim: SimExecutor) => Executor;
     clock?: () => number;
     closeRequested?: () => boolean;
+    coachFetch?: typeof fetch;
   } = {},
 ) {
   let clock = NOW;
@@ -101,6 +102,7 @@ async function harness(
     alerts: { send: () => {} } as unknown as Alerts,
     now,
     closeRequested: opts.closeRequested,
+    coachFetch: opts.coachFetch,
   });
   await engine.start();
   let closed = false;
@@ -526,5 +528,53 @@ describe("Catfolio engine, protection and recovery", () => {
     unlock();
     lockRun(path)();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+
+describe("coach approval in the running engine", () => {
+  const coachFetch = (async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({
+    diagnosis: "Trend threshold blocked the recorded entries", rationale: "Try a one-point adjustment", tradeoff: "More false signals are possible",
+    change: { field: "minTrendScore", from: 3, to: 2 },
+  }) } }] }))) as typeof fetch;
+  function seedHistory(db: Db) {
+    for (let i = 0; i < 31; i++) db.raw.prepare(`INSERT INTO decisions(bee,ts,choice,menu_json,action_json,status,audit_json)
+      SELECT bee,?,choice,menu_json,action_json,status,audit_json FROM decisions WHERE bee='tiger' ORDER BY id LIMIT 1`).run(NOW - 3600000 - i * 60000);
+  }
+  it("hot-applies only an approved threshold and keeps normal position sizing and exits", async () => {
+    const h = await harness(async (ask) => answer(ask, ask.menu.LONG_BTC ? "LONG_BTC" : "WAIT"), {
+      cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
+    });
+    h.s.trend!.score = 2;
+    await h.engine.tick(); seedHistory(h.db);
+    expect(h.engine.bees.tiger.position).toBeNull();
+    await h.engine.coach.tick();
+    const pending = h.engine.coach.state().entries.find((e) => e.cat === "tiger")!;
+    expect(pending.status).toBe("pending");
+    await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
+    h.engine.coach.resolve(pending.id, "accept");
+    expect(h.engine.bees.tiger.position).toBeNull();
+    await h.engine.tick(); expect(h.engine.bees.tiger.position).not.toBeNull();
+    expect(h.engine.bees.tiger.position!.stopPx).toBe(99);
+    expect(h.engine.bees.mochi.position).toBeNull();
+    h.engine.coach.reset("tiger");
+    expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
+    expect(h.engine.bees.tiger.position!.stopPx).toBe(99);
+  });
+  it("discards in-flight decisions when an approved threshold changes", async () => {
+    let slow = false;
+    const releases: Array<() => void> = [];
+    const h = await harness(async (ask) => slow ? new Promise((resolve) => releases.push(() => resolve(answer(ask)))) : answer(ask), {
+      cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
+    });
+    h.s.trend!.score = 2;
+    await h.engine.tick(); seedHistory(h.db); await h.engine.coach.tick();
+    slow = true;
+    const pending = h.engine.tick();
+    expect(releases).toHaveLength(2);
+    h.engine.coach.resolve(h.engine.coach.state().entries[0]!.id, "accept");
+    releases.forEach((release) => release()); await pending;
+    expect(h.db.raw.prepare("SELECT COUNT(*) AS n FROM decisions WHERE bee='tiger' AND vetoed_by='stale_model_response'").get()).toMatchObject({ n: 1 });
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
   });
 });

@@ -62,19 +62,7 @@ export function catBrain(id: BeeId, cfg: Config): BeeBrain {
         return menu;
       }
       const menu: Menu = { WAIT: { desc: "Keep cash; no entry required", intent: { kind: "hold" } } };
-      const eligible = candidates(ctx).filter((s) => {
-        const t = s.trend;
-        if (!t || t.slicesAvailable !== 9 || !Number.isFinite(t.score) || t.score < limits.minTrendScore) return false;
-        if (!tiger) return t.shortOn === 0 && mochiSize(s, ctx) > 0 && Number.isFinite(t.atr4hPct) && t.atr4hPct! > 0;
-        const b = s.breakout, c = s.confirmed15m, rules = cfg.strategies.tiger;
-        const dayStart = Math.floor(ctx.now / DAY) * DAY;
-        const remaining = (dayStart + DAY - 60000 - ctx.now) / 60000;
-        return ctx.bee.tradesToday < limits.maxTradesPerDay && remaining >= rules.minMinutesToClose &&
-          !!b && b.dayStart === dayStart && [b.trigger, b.dayOpen, b.prevRange].every(Number.isFinite) && b.prevRange > 0 && b.dayOpen > 0 &&
-          !!c && c.ts >= dayStart && ctx.now - c.ts >= 15 * 60000 && ctx.now - c.ts <= 31 * 60000 &&
-          c.close >= b.trigger && s.mid >= b.trigger && s.mid <= b.trigger + rules.maxChaseRangeFrac * b.prevRange &&
-          (s.ret1hPct ?? 0) > 0 && Number.isFinite(s.fundingPct) && s.fundingPct! <= rules.maxFundingPct;
-      });
+      const eligible = candidates(ctx).filter((s) => entryBlockers(id, s, ctx).length === 0);
       // Preserve Breezy's stronger-coin selection instead of letting weak alternatives dilute the menu.
       const best = tiger ? eligible : [strongerCoin(eligible)].filter((s): s is CoinStats => !!s);
       for (const s of best) menu[`LONG_${s.coin}`] = {
@@ -117,4 +105,46 @@ export function strategyFacts(id: BeeId, cfg: Config): string[] {
     size,
     `Initial stop: ${l.stopAtrMult} × four-hour ATR. Ratchet along channel midpoints; close when trend score reaches zero or turns negative. Offer one half-trim after a ${cfg.strategies.mochi.trimScoreDrop}-point score drop. Never add. WAIT is valid.`,
   ];
+}
+
+/** Used by both the entry menu and the coach, so explanations match actual gates. */
+export function entryBlockers(id: BeeId, s: CoinStats, ctx: BeeContext): string[] {
+  const l = ctx.cfg.cats[id], t = s.trend, reasons: string[] = [];
+  if (!fresh(s, ctx)) reasons.push("stale_indicators");
+  if (!ctx.cfg.slots[id].coins.includes(s.coin)) reasons.push("coin_not_allowed");
+  if (!(s.vol24hUsd >= l.minVolumeUsd)) reasons.push("liquidity_gate");
+  if (!(s.spreadBp <= l.spreadGateBps)) reasons.push("spread_gate");
+  if (!ctx.view.gated.includes(s.instId)) reasons.push("market_universe_gate");
+  if (!t || t.slicesAvailable !== 9 || !Number.isFinite(t.score)) reasons.push("incomplete_trend_history");
+  else if (t.score < l.minTrendScore) reasons.push("minTrendScore");
+  if (id === "mochi") {
+    if (t && t.shortOn !== 0) reasons.push("opposing_short_slices");
+    if (!t || !(t.score > 0) || !Number.isFinite(t.rv90Pct) || !(t.rv90Pct! > 0)) reasons.push("invalid_volatility_size");
+    if (!t || !Number.isFinite(t.atr4hPct) || !(t.atr4hPct! > 0)) reasons.push("missing_atr_stop");
+  } else {
+    const b = s.breakout, c = s.confirmed15m, rules = ctx.cfg.strategies.tiger;
+    const dayStart = Math.floor(ctx.now / DAY) * DAY;
+    if (ctx.bee.tradesToday >= l.maxTradesPerDay) reasons.push("trade_cap");
+    if ((dayStart + DAY - 60000 - ctx.now) / 60000 < rules.minMinutesToClose) reasons.push("too_close_to_day_exit");
+    if (!b || b.dayStart !== dayStart || ![b.trigger, b.dayOpen, b.prevRange].every(Number.isFinite) || !(b.prevRange > 0) || !(b.dayOpen > 0)) reasons.push("missing_daily_range");
+    else {
+      if (!c || c.ts < dayStart || ctx.now - c.ts < 15 * 60000 || ctx.now - c.ts > 31 * 60000) reasons.push("missing_confirmed_15m_close");
+      if (!c || !(c.close >= b.trigger) || !(s.mid >= b.trigger)) reasons.push("breakout_not_confirmed");
+      if (!(s.mid <= b.trigger + rules.maxChaseRangeFrac * b.prevRange)) reasons.push("price_extended");
+    }
+    if (!((s.ret1hPct ?? 0) > 0)) reasons.push("momentum_not_positive");
+    if (!Number.isFinite(s.fundingPct) || !(s.fundingPct! <= rules.maxFundingPct)) reasons.push("funding_gate");
+  }
+  return reasons;
+}
+
+export function entryDiagnostics(id: BeeId, ctx: BeeContext) {
+  return ctx.cfg.slots[id].coins.map((coin) => {
+    const s = [...ctx.view.stats.values()].find((s) => s.coin === coin);
+    return { coin, blockers: s ? entryBlockers(id, s, ctx) : ["missing_market_data"],
+      trendScore: s?.trend?.score ?? null, spreadBps: s?.spreadBp ?? null,
+      volumeUsd: s?.vol24hUsd ?? null, mid: s?.mid ?? null,
+      breakoutTrigger: s?.breakout?.trigger ?? null,
+      confirmedClose: s?.confirmed15m?.close ?? null };
+  });
 }

@@ -92,6 +92,8 @@ async function main() {
       engine: {
         bus,
         db,
+        coach: engine.coach,
+        coachAdminToken: cfg.coach.adminToken,
         visitors: new Visitors(db),
         snapshot: () => engine.snapshot(),
         health: () => engine.health(),

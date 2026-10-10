@@ -1,3 +1,4 @@
+import { CoachPanel } from "./CoachPanel";
 import { useState } from "react";
 import { MorningReport, type Report } from "./MorningReport";
 import { CAT_IDS, CAT_META, CatCard, catName, pct, usd } from "./CatCard";
@@ -5,7 +6,7 @@ import { useFeed } from "./useFeed";
 import type { CatId } from "./types";
 
 export function App() {
-  const { snap, profile, curves, decisions, connected } = useFeed();
+  const { snap, profile, curves, decisions, connected, refresh } = useFeed();
   const [showSetup, setShowSetup] = useState(false);
   const [filter, setFilter] = useState<CatId | "all">("all");
   const [report, setReport] = useState<Report | string | null>(null);
@@ -168,6 +169,7 @@ export function App() {
           <span className="muted">One position per persona</span>
         </div>
       </section>
+      <CoachPanel state={snap?.coach} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} onUpdate={refresh} />
       <div className="desk-heading">
         <span className="eyebrow">
           ONE WALL-E. TWO PERSONAS. <span>/</span> 02

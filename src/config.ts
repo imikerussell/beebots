@@ -54,6 +54,7 @@ export interface Config {
     dailyUsdCap: number;
     usdPerMTok: number;
   };
+  coach: { enabled: boolean; apiKey?: string; adminToken?: string; model: string };
   strategies: {
     tiger: { breakoutK: number; maxChaseRangeFrac: number; minMinutesToClose: number; maxFundingPct: number };
     mochi: { volTargetPct: number; trimScoreDrop: number };
@@ -268,7 +269,17 @@ export function loadConfig(
   const logLevel = str("LOG_LEVEL", "info");
   if (!["debug", "info", "warn", "error"].includes(logLevel))
     throw new ConfigError("Invalid LOG_LEVEL");
+  const coachEnabled = str("COACH_ENABLED", env.AI_GATEWAY_API_KEY?.trim() ? "true" : "false");
+  if (!["true", "false"].includes(coachEnabled)) throw new ConfigError("COACH_ENABLED must be true or false");
+  const adminToken = env.COACH_ADMIN_TOKEN?.trim() || undefined;
+  if (adminToken && adminToken.length < 24) throw new ConfigError("COACH_ADMIN_TOKEN must be at least 24 characters");
   return {
+    coach: {
+      enabled: coachEnabled === "true",
+      apiKey: env.AI_GATEWAY_API_KEY?.trim() || undefined,
+      adminToken,
+      model: str("COACH_MODEL", "anthropic/claude-sonnet-4.6"),
+    },
     strategies: {
       tiger: {
         breakoutK: num("TIGER_BREAKOUT_K", 0.5, 0.1, 2),

@@ -58,6 +58,7 @@ export interface Snapshot {
     error: string | null;
   };
   market: { refreshedAt: number };
+  coach?: CoachState;
 }
 export interface Profile {
   cats: Array<{
@@ -76,4 +77,20 @@ export interface Decision {
   choice: string | null;
   status: string;
   error: string | null;
+}
+
+export type CoachField = "minTrendScore" | "minActionProbability" | "minConviction";
+export interface CoachEntry {
+  id: number; cat: CatId; day: string; createdAt: number; expiresAt: number;
+  status: "reviewing" | "pending" | "accepted" | "declined" | "no_change" | "failed" | "expired" | "rolled_back";
+  model: string;
+  review: { diagnosis: string; rationale: string; tradeoff: string;
+    change: { field: CoachField; from: number; to: number } | null } | null;
+  evidence: { summary: { decisions: number; waits: number; holds: number; modelFailures: number };
+    blockers: Array<{ reason: string; decisions: number }> };
+}
+export interface CoachState {
+  enabled: boolean; canReview: boolean; model: string; message: string; approvalMessage: string | null;
+  cats: Array<{ cat: CatId; current: Record<CoachField, number>; baseline: Record<CoachField, number>; activeReviewId: number | null; nextReviewAt: number | null }>;
+  entries: CoachEntry[];
 }

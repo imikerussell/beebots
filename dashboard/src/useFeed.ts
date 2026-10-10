@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CatId, Decision, Profile, Snapshot } from "./types";
 export type Curve = Array<[number, number]>;
 export function useFeed() {
@@ -7,6 +7,14 @@ export function useFeed() {
   const [curves, setCurves] = useState<Partial<Record<CatId, Curve>>>({});
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [connected, setConnected] = useState(false);
+  const refresh = useCallback(async () => {
+    try {
+      const [sr, pr] = await Promise.all([fetch("/snapshot"), fetch("/profile")]);
+      if (!sr.ok || !pr.ok) throw new Error("Engine unavailable");
+      const [s, p] = await Promise.all([sr.json() as Promise<Snapshot>, pr.json() as Promise<Profile>]);
+      setSnap(s); setProfile(p); setConnected(true);
+    } catch { setConnected(false); }
+  }, []);
   useEffect(() => {
     let alive = true;
     const get = async <T>(path: string): Promise<T> => {
@@ -14,24 +22,10 @@ export function useFeed() {
       if (!r.ok) throw new Error(path);
       return r.json() as Promise<T>;
     };
-    const refresh = async () => {
-      try {
-        const s = await get<Snapshot>("/snapshot");
-        if (alive) {
-          setSnap(s);
-          setConnected(true);
-        }
-      } catch {
-        if (alive) setConnected(false);
-      }
-    };
     const charts = () =>
       void get<Partial<Record<CatId, Curve>>>("/equity?days=30")
         .then((c) => alive && setCurves(c))
         .catch(() => {});
-    void get<Profile>("/profile")
-      .then((p) => alive && setProfile(p))
-      .catch(() => {});
     void get<Array<Decision & { type: string }>>("/history?n=200")
       .then(
         (e) =>
@@ -65,6 +59,6 @@ export function useFeed() {
       clearInterval(timer);
       events.close();
     };
-  }, []);
-  return { snap, profile, curves, decisions, connected };
+  }, [refresh]);
+  return { snap, profile, curves, decisions, connected, refresh };
 }

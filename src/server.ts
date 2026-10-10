@@ -1,4 +1,6 @@
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
+import { CoachConflict, type CatCoach } from "./coach.js";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Db } from "./db.js";
 import type { EventBus } from "./events.js";
 import { log } from "./log.js";
@@ -14,6 +16,8 @@ export interface ServerDeps {
     health: () => { ok: boolean; [k: string]: unknown };
     visitors: Visitors;
     report?: () => unknown;
+    coach?: CatCoach;
+    coachAdminToken?: string;
   };
   profile: () => unknown;
 }
@@ -46,6 +50,12 @@ export function startServer(
   const historyCache = new Map<number, { at: number; body: string }>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    if (url.pathname.startsWith("/coach")) {
+      void coachRequest(req, res, url.pathname, deps.engine).catch(() => {
+        if (!res.headersSent) json(res, 500, { error: "Coach request failed." });
+      });
+      return;
+    }
     if (req.method !== "GET") return json(res, 405, { error: "read-only" });
     if (url.pathname === "/profile") return json(res, 200, deps.profile());
     const e = deps.engine;
@@ -156,4 +166,37 @@ export function startServer(
   });
   server.listen(port, bind, () => log.info("engine http listening", { port }));
   return server;
+}
+
+async function coachRequest(req: IncomingMessage, res: ServerResponse, path: string, engine: ServerDeps["engine"]) {
+  if (!engine?.coach) return json(res, 503, { error: "Coach unavailable." });
+  if (req.method === "GET" && path === "/coach") return json(res, 200, engine.coach.state());
+  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed." });
+  const expected = engine.coachAdminToken;
+  if (!expected) return json(res, 503, { error: "Set COACH_ADMIN_TOKEN on the engine to enable approval." });
+  const provided = req.headers.authorization ?? "";
+  const wanted = `Bearer ${expected}`;
+  // A bearer header + JSON body prevents ambient-cookie CSRF. Cross-origin preflight is not allowed.
+  const suppliedBytes = Buffer.from(provided), expectedBytes = Buffer.from(wanted);
+  if (suppliedBytes.length !== expectedBytes.length || !timingSafeEqual(suppliedBytes, expectedBytes))
+    return json(res, 401, { error: "Enter the engine's owner key to review suggestions." });
+  if (req.headers["content-type"]?.split(";")[0] !== "application/json") return json(res, 415, { error: "JSON required." });
+  let raw = "";
+  for await (const chunk of req) {
+    raw += String(chunk);
+    if (raw.length > 1024) return json(res, 413, { error: "Request too large." });
+  }
+  let body: unknown;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: "Invalid JSON." }); }
+  if (!body || typeof body !== "object" || Object.keys(body).length !== 1) return json(res, 400, { error: "Invalid request." });
+  try {
+    if (path === "/coach/reset" && "cat" in body && (body.cat === "tiger" || body.cat === "mochi"))
+      return json(res, 200, engine.coach.reset(body.cat));
+    if ((path === "/coach/accept" || path === "/coach/decline") && "id" in body && typeof body.id === "number" && Number.isSafeInteger(body.id) && body.id > 0)
+      return json(res, 200, engine.coach.resolve(body.id, path === "/coach/accept" ? "accept" : "decline"));
+    return json(res, 400, { error: "Invalid review action." });
+  } catch (err) {
+    if (err instanceof CoachConflict) return json(res, 409, { error: err.message });
+    throw err;
+  }
 }

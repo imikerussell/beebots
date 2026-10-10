@@ -1117,3 +1117,31 @@ dialog details {
     animation: none !important;
   }
 }
+
+/* Daily coach: proposals stay visibly separate from executed trading decisions. */
+.coach-panel { margin: 24px 0 32px; padding: 24px; border: 1px solid var(--border, #2c343c); border-radius: 18px; background: #14191e; }
+.coach-panel h2 { margin: 6px 0; font-size: 23px; }
+.coach-panel h3 { margin: 0; font-size: 18px; }
+.coach-panel p { line-height: 1.6; font-size: 13px; }
+.coach-explainer { max-width: 850px; color: #bdc5ce; }
+.coach-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+.coach-review { padding: 20px; border: 1px solid #30383f; border-radius: 12px; background: #10151a; min-width: 0; overflow-wrap: anywhere; }
+.coach-review.tiger { border-top: 2px solid #ffb443; }
+.coach-review.mochi { border-top: 2px solid #85cfff; }
+.coach-status { font-size: 11px; text-align: right; }
+.coach-access { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; margin: 18px 0; }
+.coach-access input { width: 260px; max-width: 100%; padding: 10px 12px; background: #0c1014; color: #e7edf4; border: 1px solid #434c56; border-radius: 7px; }
+.coach-access span { color: #949eaa; font-size: 11px; }
+.coach-change { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; background: #202a32; padding: 14px; border-radius: 8px; font-size: 13px; }
+.coach-change strong { font-size: 18px; color: #f3ce8c; }
+.coach-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.coach-actions button, .coach-reset { cursor: pointer; border: 1px solid #c6a46c; border-radius: 7px; background: #efbc6b; color: #171b20; padding: 10px 14px; font: inherit; font-size: 12px; font-weight: 600; }
+.coach-actions .coach-secondary, .coach-reset { background: transparent; color: #d8e0e8; border-color: #4a5662; }
+.coach-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.coach-panel button:focus-visible, .coach-panel input:focus-visible, .coach-panel summary:focus-visible { outline: 2px solid #85cfff; outline-offset: 3px; }
+.coach-panel details { margin: 15px 0; font-size: 12px; line-height: 1.6; }
+.coach-panel summary { cursor: pointer; color: #b9c9d8; }
+.coach-current dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.coach-history > div { border-top: 1px solid #30383f; padding-top: 12px; margin-top: 12px; }
+.coach-model { margin-bottom: 0; }
+@media (max-width: 800px) { .coach-grid { grid-template-columns: 1fr; } .coach-panel { padding: 16px; } }
