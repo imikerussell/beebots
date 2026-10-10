@@ -72,11 +72,21 @@ export interface Profile {
   }>;
 }
 export interface Decision {
+  decisionId?: number;
   ts: number;
   bee: CatId;
   choice: string | null;
   status: string;
   error: string | null;
+  latencyMs?: number | null;
+  probabilities?: Record<string, number> | null;
+  confidence?: number | null;
+  source?: "model" | "rules" | "protection";
+  pnlUsd?: number;
+  vetoedBy?: string | null;
+  forcedBy?: string | null;
+  entryDiagnostics?: Array<{ coin: string; blockers: string[] }>;
+  action?: { kind: string; instId?: string; side?: string; notionalUsd?: number; fraction?: number; reason?: string };
 }
 
 export type CoachField = "minTrendScore" | "minActionProbability" | "minConviction";

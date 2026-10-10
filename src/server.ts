@@ -47,7 +47,7 @@ export function startServer(
 ): Server {
   const streams = new Map<string, number>();
   let streamsTotal = 0;
-  const historyCache = new Map<number, { at: number; body: string }>();
+  const historyCache = new Map<string, { at: number; body: string }>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname.startsWith("/coach")) {
@@ -104,11 +104,13 @@ export function startServer(
           ),
         );
         const now = Date.now();
-        let hit = historyCache.get(n);
+        const type = url.searchParams.get("type") === "decision" ? "decision" : undefined;
+        const cacheKey = `${type ?? "all"}:${n}`;
+        let hit = historyCache.get(cacheKey);
         if (!hit || now - hit.at > HISTORY_CACHE_MS) {
           if (historyCache.size > 50) historyCache.clear();
-          hit = { at: now, body: `[${e.db.recentEvents(n).join(",")}]` };
-          historyCache.set(n, hit);
+          hit = { at: now, body: `[${e.db.recentEvents(n, type).join(",")}]` };
+          historyCache.set(cacheKey, hit);
         }
         const body = hit.body;
         res.writeHead(200, {
@@ -145,6 +147,12 @@ export function startServer(
           "access-control-allow-origin": "*",
         });
         res.write("retry: 2000\n\n");
+        // Keep idle streams alive through reverse proxies, even while cats wait.
+        const heartbeat = setInterval(() => {
+          if (res.writableLength > MAX_BUFFERED) res.destroy();
+          else res.write(`data: ${JSON.stringify({ type: "heartbeat", ts: Date.now() })}\n\n`);
+        }, 15_000);
+        heartbeat.unref();
         const unsub = e.bus.subscribe((line) => {
           // Drop slow clients instead of buffering without bound.
           if (res.writableLength > MAX_BUFFERED) {
@@ -155,6 +163,7 @@ export function startServer(
           res.write(`data: ${line}\n\n`);
         });
         req.on("close", () => {
+          clearInterval(heartbeat);
           unsub();
           release();
         });

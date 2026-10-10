@@ -323,10 +323,10 @@ export class Db {
       .run(ts, type, json);
   }
 
-  recentEvents(n: number): string[] {
+  recentEvents(n: number, type?: "decision"): string[] {
     const rows = this.raw
       .prepare(
-        `SELECT json FROM (SELECT id, json FROM events ORDER BY id DESC LIMIT ?) ORDER BY id ASC`,
+        `SELECT json FROM (SELECT id, json FROM events ${type ? "WHERE type = 'decision'" : ""} ORDER BY id DESC LIMIT ?) ORDER BY id ASC`,
       )
       .all(n) as Array<{ json: string }>;
     return rows.map((r) => r.json);

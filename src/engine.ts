@@ -523,7 +523,13 @@ export class Engine {
       "decision",
       {
         bee: id,
+        decisionId,
         ...this.last[id],
+        probabilities: r?.ok ? r.probabilities : null,
+        confidence: r?.ok ? r.confidence : null,
+        source: r?.ok ? r.source : r ? "model" : "protection",
+        pnlUsd: this.bees[id].equityUsd - this.d.cfg.cats[id].startEquityUsd,
+        entryDiagnostics: (audit as { entryDiagnostics?: unknown }).entryDiagnostics ?? [],
         action: risk.action,
         forcedBy: risk.forcedBy,
         model: r?.ok ? r.model : null,

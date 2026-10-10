@@ -134,6 +134,13 @@ describe("Catfolio engine, protection and recovery", () => {
     expect(Object.keys(h.engine.bees)).toEqual(BEES);
     expect(h.engine.bees.tiger.cashUsd + h.engine.bees.mochi.cashUsd).toBe(200);
     expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
+    const streamed = h.db.recentEvents(10, "decision").map(line => JSON.parse(line));
+    expect(streamed).toHaveLength(2);
+    expect(streamed[0]).toMatchObject({
+      decisionId: expect.any(Number), choice: "WAIT", probabilities: { WAIT: 1 },
+      confidence: 1, source: "model", latencyMs: 30, pnlUsd: 0,
+      action: { kind: "none" }, entryDiagnostics: expect.any(Array),
+    });
     h.engine.bees.tiger.cashUsd = 5;
     await h.engine.protectiveTick();
     expect(h.engine.bees.mochi.cashUsd).toBe(100);
@@ -303,6 +310,10 @@ describe("Catfolio engine, protection and recovery", () => {
         .all(),
     ).toHaveLength(2);
     h.engine.bees.tiger.tradesToday = 6;
+    expect(h.db.recentEvents(2, "decision").map(line => JSON.parse(line))).toEqual([
+      expect.objectContaining({ error: "timeout", probabilities: null, confidence: null, source: "model", latencyMs: 45000 }),
+      expect.objectContaining({ error: "timeout", probabilities: null, confidence: null, source: "model", latencyMs: 45000 }),
+    ]);
     h.engine.bees.tiger.position = position(h.s, { stopPx: 101 });
     await h.engine.protectiveTick();
     expect(h.engine.bees.tiger.position).toBeNull();

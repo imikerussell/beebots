@@ -37,6 +37,8 @@ pnpm --dir dashboard dev          # open http://127.0.0.1:5173
 
 The first scheduled decision is after 60 seconds. Protective checks run every five seconds. The dashboard shows PAPER, each cat's allocated capital/equity, returns, positions/stops, costs, exposure, drawdown, recorded action/veto, and local inference requests/latency. “Local setup” explains the file-based setup; no keys are entered in the browser. “Morning report” opens the comparison and offers a JSON download.
 
+The public **Decision stream** shows the latest 200 recorded decisions over `/events` (SSE), including WAIT/HOLD, rules-only decisions, blocked actions, protective exits, and model failures. Rows show action probabilities, response time, and total cat P&L at decision time when available; approval by risk checks is not confirmation of a fill. Filter by cat or pause the view to read without pausing trading. The connection indicator and last-decision age distinguish a quiet stream from a disconnected one. Recent decisions are merged from `/history?type=decision&n=200` on load and reconnect without duplicate rows; older events without the new fields still display. Streams send heartbeat events every 15 seconds; the dashboard reconnects if no event arrives for 45 seconds.
+
 ### Morning, stop, and resume
 
 ```sh

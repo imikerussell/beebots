@@ -2,18 +2,18 @@ import { CatCoach } from "./CatCoach";
 import { useTrainerSession } from "./useTrainerSession";
 import { TrainerAccess } from "./TrainerAccess";
 import { ModelIssue } from "./ModelIssue";
+import { DecisionStream } from "./DecisionStream";
 import { useState } from "react";
 import { MorningReport, type Report } from "./MorningReport";
-import { CAT_IDS, CAT_META, CatCard, catName, pct, usd } from "./CatCard";
+import { CAT_IDS, CatCard, catName, pct, usd } from "./CatCard";
 import { useFeed } from "./useFeed";
 import type { CatId } from "./types";
 
 export function App() {
-  const { snap, profile, curves, decisions, connected, refresh } = useFeed();
+  const { snap, profile, curves, decisions, connected, streamStatus, historyStatus, refresh } = useFeed();
   const { trainerKey, restoring, unlockTrainer, lockTrainer } =
     useTrainerSession();
   const [showSetup, setShowSetup] = useState(false);
-  const [filter, setFilter] = useState<CatId | "all">("all");
   const [report, setReport] = useState<Report | string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const loadReport = async () => {
@@ -34,9 +34,6 @@ export function App() {
     snap?.cats.reduce((sum, cat) => sum + cat.totals.feesUsd, 0) ?? 0;
   const totalDecisions =
     snap?.cats.reduce((sum, cat) => sum + cat.totals.decisions, 0) ?? 0;
-  const visibleDecisions = decisions.filter(
-    (d) => filter === "all" || d.bee === filter,
-  );
   const nameFor = (id: CatId) =>
     catName(
       id,
@@ -177,6 +174,7 @@ export function App() {
           <span className="muted">One position per persona</span>
         </div>
       </section>
+      <DecisionStream decisions={decisions} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={snap?.decisionIntervalMs} closed={!!snap?.closed} />
       <div className="desk-heading">
         <span className="eyebrow">
           ONE WALL-E. TWO PERSONAS. <span>/</span> 02
@@ -265,65 +263,6 @@ export function App() {
             <div className="model-footnote">
               Two strategies. One selected model.
             </div>
-          </section>
-          <section className="activity">
-            <div className="section-title">
-              <h2>Decision journal</h2>
-              <span className="count-badge">{decisions.length}</span>
-            </div>
-            <div className="journal-filters" aria-label="Filter decisions">
-              {(["all", ...CAT_IDS] as const).map((id) => (
-                <button
-                  key={id}
-                  className={filter === id ? "active" : ""}
-                  aria-pressed={filter === id}
-                  onClick={() => setFilter(id)}
-                >
-                  {id === "all" ? "All" : nameFor(id)}
-                </button>
-              ))}
-            </div>
-            <div className="journal-list">
-              {visibleDecisions.length ? (
-                visibleDecisions.map((d, i) => (
-                  <div
-                    className={`journal-row ${d.bee}`}
-                    key={`${d.ts}-${d.bee}-${i}`}
-                  >
-                    <div className="journal-who">
-                      <img src={CAT_META[d.bee].img} alt="" />
-                      <strong>{nameFor(d.bee)}</strong>
-                      <time>
-                        {new Date(d.ts).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })}
-                      </time>
-                    </div>
-                    <div className="journal-action">
-                      {d.choice ?? (d.error ? "Model error" : "Risk check")}
-                    </div>
-                    <p>{d.status}</p>
-                  </div>
-                ))
-              ) : (
-                <div className="journal-empty">
-                  <span aria-hidden="true">◎</span>
-                  <h3>
-                    {filter === "all"
-                      ? "Quiet paws for now."
-                      : `No calls from ${nameFor(filter)} yet.`}
-                  </h3>
-                  <p>
-                    Recorded decisions land here.
-                    <br />
-                    Sometimes the best move is to wait.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="journal-note">Recorded actions & rule results.</div>
           </section>
           <section className="rhythm-panel">
             <span className="eyebrow">THE RHYTHM</span>
