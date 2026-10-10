@@ -85,8 +85,44 @@ export interface Decision {
   pnlUsd?: number;
   vetoedBy?: string | null;
   forcedBy?: string | null;
-  entryDiagnostics?: Array<{ coin: string; blockers: string[] }>;
+  entryDiagnostics?: EntryDiagnostic[];
   action?: { kind: string; instId?: string; side?: string; notionalUsd?: number; fraction?: number; reason?: string };
+}
+
+/** Optional measurements keep historical decision records readable. */
+export interface EntryDiagnostic {
+  coin: string;
+  blockers: string[];
+  indicatorsAgeMs?: number | null;
+  maxIndicatorsAgeMs?: number | null;
+  feedError?: string | null;
+  feedErrorAt?: number | null;
+  confirmedAt?: number | null;
+  confirmedAgeMs?: number | null;
+  maxConfirmedAgeMs?: number | null;
+  entryMinutes?: number;
+  trendMinutes?: number;
+  trendScore?: number | null;
+  minTrendScore?: number | null;
+  momentumPct?: number | null;
+  momentumMinutes?: number;
+  stopDistancePct?: number | null;
+  roundTripCostPct?: number | null;
+  minStopDistancePct?: number | null;
+  spreadBps?: number | null;
+  maxSpreadBps?: number | null;
+  volumeUsd?: number | null;
+  minVolumeUsd?: number | null;
+  mid?: number | null;
+  confirmedClose?: number | null;
+  breakoutTrigger?: number | null;
+  maxEntryPrice?: number | null;
+  fundingPct?: number | null;
+  maxFundingPct?: number | null;
+  shortSlices?: number | null;
+  trendSlices?: number | null;
+  tradesToday?: number;
+  maxTradesPerDay?: number;
 }
 
 export type CoachField = "minTrendScore" | "minActionProbability" | "minConviction";

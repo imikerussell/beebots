@@ -10,7 +10,17 @@ import { useFeed } from "./useFeed";
 import type { CatId } from "./types";
 
 export function App() {
-  const { snap, profile, curves, decisions, liveDecisionKeys, connected, streamStatus, historyStatus, refresh } = useFeed();
+  const {
+    snap,
+    profile,
+    curves,
+    decisions,
+    liveDecisionKeys,
+    connected,
+    streamStatus,
+    historyStatus,
+    refresh,
+  } = useFeed();
   const { trainerKey, restoring, unlockTrainer, lockTrainer } =
     useTrainerSession();
   const [report, setReport] = useState<Report | string | null>(null);
@@ -119,12 +129,6 @@ export function App() {
             : "Closing run. Waiting for fresh quotes to exit remaining positions."}
         </div>
       )}
-      <div className="desk-heading">
-        <span className="eyebrow">
-          ONE WALL-E. TWO PERSONAS. <span>/</span> 02
-        </span>
-        <span>Different instincts. Same discipline.</span>
-      </div>
       <div className="trading-desk">
         <section className="cats" aria-label="Wall-E persona portfolios">
           {CAT_IDS.map((id) => (
@@ -151,7 +155,15 @@ export function App() {
           ))}
         </section>
         <aside className="sidebar">
-          <DecisionStream liveDecisionKeys={liveDecisionKeys} decisions={decisions} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={snap?.decisionIntervalMs} closed={!!snap?.closed} />
+          <DecisionStream
+            liveDecisionKeys={liveDecisionKeys}
+            decisions={decisions}
+            names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }}
+            streamStatus={streamStatus}
+            historyStatus={historyStatus}
+            intervalMs={snap?.decisionIntervalMs}
+            closed={!!snap?.closed}
+          />
           <section className="model-panel">
             <div className="section-title">
               <span className="eyebrow">THE BRAIN</span>
@@ -164,12 +176,12 @@ export function App() {
                 {!connected
                   ? "Status unknown"
                   : snap?.inference.error
-                  ? "Decision issue"
-                  : snap?.inference.connected
-                    ? "Connected"
-                    : snap?.inference.requests === 0
-                      ? "Not called yet"
-                      : "Awaiting response"}
+                    ? "Decision issue"
+                    : snap?.inference.connected
+                      ? "Connected"
+                      : snap?.inference.requests === 0
+                        ? "Not called yet"
+                        : "Awaiting response"}
               </span>
             </div>
             <h3>{snap?.inference.provider ?? "Decision engine"}</h3>
@@ -196,9 +208,18 @@ export function App() {
                 </dd>
               </div>
             </dl>
-            {connected && snap && !snap.inference.error && !snap.inference.connected && snap.inference.requests === 0 && (
-              <p className="model-idle">No model request has been made since this engine started. When WAIT or HOLD is the only available action, the rules handle it without calling the model. Connectivity has not been tested yet.</p>
-            )}
+            {connected &&
+              snap &&
+              !snap.inference.error &&
+              !snap.inference.connected &&
+              snap.inference.requests === 0 && (
+                <p className="model-idle">
+                  No model request has been made since this engine started. When
+                  WAIT or HOLD is the only available action, the rules handle it
+                  without calling the model. Connectivity has not been tested
+                  yet.
+                </p>
+              )}
             {snap?.inference.error && (
               <ModelIssue
                 error={snap.inference.error}
@@ -235,7 +256,6 @@ export function App() {
               </b>
             </div>
           </section>
-
         </aside>
       </div>
       {report !== null && (

@@ -930,6 +930,9 @@ dd {
 .stream-diagnostics {
   margin-top: 8px;
 }
+.stream-coin-diagnostics { margin-top: 9px; font-size: 11px; }
+.stream-coin-diagnostics ul { margin: 4px 0; padding-left: 16px; }
+.stream-coin-diagnostics li { margin: 4px 0; font-size: 10px; line-height: 1.5; }
 .stream-empty,
 .stream-warning {
   font-size: 11px;

@@ -95,6 +95,9 @@ export interface TrendStats {
 
 export interface MarketView {
   ts: number;
+  /** Failed refresh attempts, separate from the last usable indicator values. */
+  dataErrors?: Map<string, { at: number; message: string }>;
+  refreshError?: { at: number; message: string } | null;
   instruments: Map<string, Instrument>;
   tickers: Map<string, Ticker>;
   stats: Map<string, CoinStats>;

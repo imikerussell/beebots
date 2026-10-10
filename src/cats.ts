@@ -10,6 +10,8 @@ const fresh = (s: CoinStats, ctx: BeeContext) => {
 };
 const entryMinutes = (id: BeeId) => id === "tiger" ? 5 : 15;
 const trendMinutes = (id: BeeId) => id === "tiger" ? 15 : 60;
+const roundTripCostPct = (s: CoinStats, ctx: BeeContext) =>
+  200 * ctx.cfg.risk.takerFeeRate + (s.spreadBp + 2 * ctx.cfg.paperSlippageBps) / 100;
 const sizeFraction = (id: BeeId, s: CoinStats | undefined, ctx: BeeContext) => {
   if (id === "tiger") return 1;
   const t = s?.intraday?.mochi.trend;
@@ -109,18 +111,20 @@ export function strategyFacts(id: BeeId, cfg: Config): string[] {
 /** Used by entry menus and coach explanations; risk controls recheck before execution. */
 export function entryBlockers(id: BeeId, s: CoinStats, ctx: BeeContext): string[] {
   const l = ctx.cfg.cats[id], signal = s.intraday?.[id], t = signal?.trend, reasons: string[] = [];
-  if (!fresh(s, ctx)) reasons.push("stale_indicators");
+  // Old or missing candles cannot support conclusions about current market conditions.
+  if (!fresh(s, ctx)) return ["stale_indicators"];
+  const age = signal ? ctx.now - signal.confirmed.ts : Infinity, period = entryMinutes(id) * 60000;
+  if (!signal || !Number.isFinite(age) || age < period || age > 2 * period + 60000)
+    return ["missing_confirmed_entry_close"];
   if (!ctx.cfg.slots[id].coins.includes(s.coin)) reasons.push("coin_not_allowed");
   if (!(s.vol24hUsd >= l.minVolumeUsd)) reasons.push("liquidity_gate");
   if (!(s.spreadBp <= l.spreadGateBps)) reasons.push("spread_gate");
   if (!ctx.view.gated.includes(s.instId)) reasons.push("market_universe_gate");
   if (!t || t.slicesAvailable !== 9 || !Number.isFinite(t.score)) reasons.push("incomplete_trend_history");
   else if (t.score < l.minTrendScore) reasons.push("minTrendScore");
-  const age = signal ? ctx.now - signal.confirmed.ts : Infinity, period = entryMinutes(id) * 60000;
-  if (!signal || age < period || age > 2 * period + 60000) reasons.push("missing_confirmed_entry_close");
   if (!signal || !Number.isFinite(signal.momentumPct) || !(signal.momentumPct! > 0)) reasons.push("momentum_not_positive");
   const a = id === "tiger" ? signal?.atrPct : t?.atrPct;
-  const costsPct = 200 * ctx.cfg.risk.takerFeeRate + (s.spreadBp + 2 * ctx.cfg.paperSlippageBps) / 100;
+  const costsPct = roundTripCostPct(s, ctx);
   if (!Number.isFinite(a) || !(a! > 0)) reasons.push("missing_atr_stop");
   else if (a! * l.stopAtrMult < 2 * costsPct) reasons.push("move_too_small_after_costs");
   if (ctx.bee.tradesToday >= l.maxTradesPerDay) reasons.push("trade_cap");
@@ -142,7 +146,26 @@ export function entryBlockers(id: BeeId, s: CoinStats, ctx: BeeContext): string[
 export function entryDiagnostics(id: BeeId, ctx: BeeContext) {
   return ctx.cfg.slots[id].coins.map(coin => {
     const s = [...ctx.view.stats.values()].find(s => s.coin === coin), signal = s?.intraday?.[id];
+    const instId = s?.instId ?? [...ctx.view.instruments.values()].find(i => i.coin === coin)?.instId;
+    const feedError = ctx.view.refreshError ?? (instId ? ctx.view.dataErrors?.get(instId) : null);
+    const l = ctx.cfg.cats[id], a = id === "tiger" ? signal?.atrPct : signal?.trend.atrPct;
     return { coin, blockers: s ? entryBlockers(id, s, ctx) : ["missing_market_data"],
+      indicatorsAgeMs: s ? ctx.now - (s.refreshedAt ?? ctx.view.ts) : null,
+      maxIndicatorsAgeMs: 3 * ctx.cfg.dataRefreshMs,
+      feedError: feedError?.message ?? null, feedErrorAt: feedError?.at ?? null,
+      confirmedAt: signal ? signal.confirmed.ts + entryMinutes(id) * 60000 : null,
+      maxConfirmedAgeMs: entryMinutes(id) * 60000 + 60000,
+      confirmedAgeMs: signal ? ctx.now - signal.confirmed.ts - entryMinutes(id) * 60000 : null,
+      minTrendScore: l.minTrendScore, momentumPct: signal?.momentumPct ?? null,
+      momentumMinutes: entryMinutes(id) * 3,
+      stopDistancePct: a != null ? a * l.stopAtrMult : null,
+      roundTripCostPct: s ? roundTripCostPct(s, ctx) : null,
+      minStopDistancePct: s ? 2 * roundTripCostPct(s, ctx) : null,
+      maxSpreadBps: l.spreadGateBps, minVolumeUsd: l.minVolumeUsd,
+      fundingPct: s?.fundingPct ?? null, maxFundingPct: id === "tiger" ? ctx.cfg.strategies.tiger.maxFundingPct : null,
+      maxEntryPrice: id === "tiger" && signal?.breakout ? signal.breakout.trigger + ctx.cfg.strategies.tiger.maxChaseRangeFrac * signal.breakout.range : null,
+      shortSlices: signal?.trend.shortOn ?? null, trendSlices: signal?.trend.slicesAvailable ?? null,
+      tradesToday: ctx.bee.tradesToday, maxTradesPerDay: l.maxTradesPerDay,
       trendMinutes: trendMinutes(id), entryMinutes: entryMinutes(id), trendScore: signal?.trend.score ?? null,
       spreadBps: s?.spreadBp ?? null, volumeUsd: s?.vol24hUsd ?? null, mid: s?.mid ?? null,
       breakoutTrigger: id === "tiger" ? signal?.breakout?.trigger ?? null : null,

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CAT_IDS } from "./CatCard";
 import { DECISION_LIMIT, decisionKey } from "./decisionFeed";
+import { dataBlocked, entryExplanations } from "./entryDiagnostics";
 import type { CatId, Decision } from "./types";
 
 const reasons: Record<string, string> = {
@@ -37,7 +38,9 @@ function actionNote(d: Decision) {
   if (d.error)
     return "No usable model answer. This attempt was recorded; no model trade allowed.";
   if (d.source === "rules")
-    return "Only the wait/hold option was available. Rules handled this decision without a model call.";
+    return d.entryDiagnostics?.some(dataBlocked)
+      ? "Market data is missing or out of date. Affected coins cannot qualify for entry; JEV was not called because no trade option was available."
+      : "No coin passed every entry rule below. JEV was not called because there was no eligible trade to evaluate.";
   if (d.action && d.action.kind !== "none") {
     const size =
       d.action.notionalUsd == null
@@ -75,7 +78,7 @@ function DecisionRow({
       : d.error
         ? "Model unavailable · no model trade"
         : d.source === "rules"
-          ? explain(d.status)
+          ? d.entryDiagnostics?.some(dataBlocked) ? "Market data issue · entry checks incomplete" : "No qualifying entry"
           : "Decision details";
   return (
     <li className={`stream-row ${d.bee}`} data-decision-key={decisionKey(d)}>
@@ -176,11 +179,12 @@ function DecisionRow({
           )}
           {!!diagnostics?.length && (
             <div className="stream-diagnostics">
-              <strong>Entry conditions</strong>
+              <strong>What blocked entry at this decision</strong>
               {diagnostics.map((c) => (
-                <p key={c.coin}>
-                  <b>{c.coin}:</b> {c.blockers.map(explain).join(" · ")}
-                </p>
+                <div className="stream-coin-diagnostics" key={c.coin}>
+                  <b>{c.coin}</b>
+                  <ul>{entryExplanations(c).map((reason, i) => <li key={i}>{reason}</li>)}</ul>
+                </div>
               ))}
             </div>
           )}

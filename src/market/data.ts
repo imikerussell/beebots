@@ -104,7 +104,7 @@ export function requireRecentCandles(
     latest.ts > now ||
     now - latest.ts > 2 * periodMs + 60000
   ) {
-    throw new Error("Missing or stale confirmed candle history");
+    throw new Error(`Missing or stale ${periodMs / 60000}m confirmed candle history (latest opening: ${latest && Number.isFinite(latest.ts) ? new Date(latest.ts).toISOString() : "none"})`);
   }
 }
 
@@ -118,6 +118,8 @@ export class MarketFeed {
   private fundingHist = new Map<string, { at: number; rates: number[] }>();
   private instrumentsAt = 0;
   private newsAvailable = false;
+  private dataErrors = new Map<string, { at: number; message: string }>();
+  private refreshError: { at: number; message: string } | null = null;
   lastRefreshAt = 0;
 
   constructor(
@@ -131,6 +133,8 @@ export class MarketFeed {
   view(): MarketView {
     return {
       ts: this.lastRefreshAt,
+      dataErrors: this.dataErrors,
+      refreshError: this.refreshError,
       instruments: this.instruments,
       tickers: this.tickers,
       stats: this.stats,
@@ -163,6 +167,16 @@ export class MarketFeed {
 
   /** Every DATA_REFRESH_MS: universe gates, candles, indicators, funding, OI, news. */
   async refresh(now = Date.now()): Promise<void> {
+    try {
+      await this.refreshData(now);
+      this.refreshError = null;
+    } catch (err) {
+      this.refreshError = { at: now, message: safeError(err).message };
+      throw err;
+    }
+  }
+
+  private async refreshData(now: number): Promise<void> {
     if (now - this.instrumentsAt > HOUR || this.instruments.size === 0) {
       const list = await this.api.instruments();
       this.instruments = new Map(
@@ -238,12 +252,14 @@ export class MarketFeed {
             mochi: intradaySignal(c15, c1h, 15, 60, now),
           };
           next.set(id, s);
+          this.dataErrors.delete(id);
         } catch (err) {
           log.warn("market data failed for coin", {
             instId: id,
             err: safeError(err),
           });
           const old = this.stats.get(id);
+          this.dataErrors.set(id, { at: now, message: safeError(err).message });
           if (old) next.set(id, old);
         }
       }),
@@ -335,7 +351,7 @@ export function intradaySignal(entries: Candle[], trends: Candle[], entryMinutes
     const rows = bars.filter(c => c.confirmed && c.ts + period <= now).slice(-count);
     if (rows.length < count || rows.some((c, i) =>
       ![c.ts,c.o,c.h,c.l,c.c].every(Number.isFinite) || c.l <= 0 || c.h < c.l || c.c < c.l || c.c > c.h ||
-      (i > 0 && c.ts - rows[i - 1]!.ts !== period))) throw new Error("Incomplete intraday candle history");
+      (i > 0 && c.ts - rows[i - 1]!.ts !== period))) throw new Error(`Incomplete ${minutes}m intraday candle history: need ${count} consecutive valid completed candles, received ${rows.length}`);
     requireRecentCandles(rows, period, now);
     return rows;
   };
