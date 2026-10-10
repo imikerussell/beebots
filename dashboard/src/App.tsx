@@ -1,4 +1,7 @@
-import { CoachPanel } from "./CoachPanel";
+import { CatCoach } from "./CatCoach";
+import { useTrainerSession } from "./useTrainerSession";
+import { TrainerAccess } from "./TrainerAccess";
+import { ModelIssue } from "./ModelIssue";
 import { useState } from "react";
 import { MorningReport, type Report } from "./MorningReport";
 import { CAT_IDS, CAT_META, CatCard, catName, pct, usd } from "./CatCard";
@@ -7,6 +10,8 @@ import type { CatId } from "./types";
 
 export function App() {
   const { snap, profile, curves, decisions, connected, refresh } = useFeed();
+  const { trainerKey, restoring, unlockTrainer, lockTrainer } =
+    useTrainerSession();
   const [showSetup, setShowSetup] = useState(false);
   const [filter, setFilter] = useState<CatId | "all">("all");
   const [report, setReport] = useState<Report | string | null>(null);
@@ -43,9 +48,6 @@ export function App() {
     <main>
       <header className="topbar">
         <div className="brand">
-          <span className="brand-symbol" aria-hidden="true">
-            ↗
-          </span>
           <div>
             <h1>
               catfolio<span>.</span>
@@ -85,6 +87,15 @@ export function App() {
           >
             {reportLoading ? "Loading…" : "Morning report ↗"}
           </button>
+          <TrainerAccess
+            unlocked={!!trainerKey}
+            restoring={restoring}
+            onUnlock={unlockTrainer}
+            onLock={lockTrainer}
+            state={snap?.coach}
+            connected={connected}
+            names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }}
+          />
         </div>
       </header>
       {showSetup && (
@@ -118,9 +129,6 @@ export function App() {
             Start it with <code>pnpm dev</code>.
           </div>
         </div>
-      )}
-      {snap?.inference.error && (
-        <div className="notice danger">{snap.inference.error}</div>
       )}
       {snap?.closed && (
         <div className="notice">
@@ -169,7 +177,6 @@ export function App() {
           <span className="muted">One position per persona</span>
         </div>
       </section>
-      <CoachPanel state={snap?.coach} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} onUpdate={refresh} />
       <div className="desk-heading">
         <span className="eyebrow">
           ONE WALL-E. TWO PERSONAS. <span>/</span> 02
@@ -186,6 +193,18 @@ export function App() {
               meta={profile?.cats.find((c) => c.id === id)}
               curve={curves[id]}
               snap={snap}
+              coaching={
+                trainerKey ? (
+                  <CatCoach
+                    cat={id}
+                    name={nameFor(id)}
+                    state={snap?.coach}
+                    ownerKey={trainerKey}
+                    onUpdate={refresh}
+                    onLock={lockTrainer}
+                  />
+                ) : undefined
+              }
             />
           ))}
         </section>
@@ -199,7 +218,11 @@ export function App() {
                 <i
                   className={`light ${snap?.inference.connected ? "on" : ""}`}
                 />
-                {snap?.inference.connected ? "Connected" : "Unavailable"}
+                {snap?.inference.error
+                  ? "Decision issue"
+                  : snap?.inference.connected
+                    ? "Connected"
+                    : "Unavailable"}
               </span>
             </div>
             <h3>{snap?.inference.provider ?? "Decision engine"}</h3>
@@ -226,6 +249,13 @@ export function App() {
                 </dd>
               </div>
             </dl>
+            {snap?.inference.error && (
+              <ModelIssue
+                error={snap.inference.error}
+                connected={connected}
+                closed={!!snap.closed}
+              />
+            )}
             {snap?.inference.estimatedSpentTodayUsd !== undefined && (
               <p className="muted">
                 API usage today: {usd(snap.inference.estimatedSpentTodayUsd)} /{" "}

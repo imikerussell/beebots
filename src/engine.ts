@@ -826,7 +826,7 @@ export class Engine {
           this.ctx(id),
         );
         p.initialStopPx = p.stopPx;
-        p.entryScore = this.d.feed.view().stats.get(instId)?.trend?.score;
+        p.entryScore = this.d.feed.view().stats.get(instId)?.intraday?.[id]?.trend.score;
         p.trendTrimmed = false;
         p.riskUsd =
           p.stopPx === null

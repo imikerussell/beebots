@@ -84,6 +84,7 @@ export interface CoachEntry {
   id: number; cat: CatId; day: string; createdAt: number; expiresAt: number;
   status: "reviewing" | "pending" | "accepted" | "declined" | "no_change" | "failed" | "expired" | "rolled_back";
   model: string;
+  completedAt: number | null; resolvedAt: number | null; error: string | null;
   review: { diagnosis: string; rationale: string; tradeoff: string;
     change: { field: CoachField; from: number; to: number } | null } | null;
   evidence: { summary: { decisions: number; waits: number; holds: number; modelFailures: number };
@@ -91,6 +92,11 @@ export interface CoachEntry {
 }
 export interface CoachState {
   enabled: boolean; canReview: boolean; model: string; message: string; approvalMessage: string | null;
-  cats: Array<{ cat: CatId; current: Record<CoachField, number>; baseline: Record<CoachField, number>; activeReviewId: number | null; nextReviewAt: number | null }>;
+  checkedAt: number | null; checkIntervalMs: number;
+  cats: Array<{ cat: CatId; current: Record<CoachField, number>; baseline: Record<CoachField, number>; activeReviewId: number | null; nextReviewAt: number | null;
+    phase: "paused" | "reviewing" | "awaiting_approval" | "scheduled" | "queued" | "gathering";
+    observations: number; requiredObservations: number; observedMinutes: number; requiredMinutes: number;
+    lastReviewAt: number | null; reviewCount: number; acceptedCount: number;
+  }>;
   entries: CoachEntry[];
 }

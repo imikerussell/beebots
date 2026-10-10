@@ -32,11 +32,11 @@ describe("two cats and real risk differences", () => {
   it("Mochi requires stronger trend, long-only and more liquidity", () => {
     const t = riskFixture(),
       m = riskFixture("mochi");
-    t.s.trend!.score = 4;
-    m.s.trend!.score = 4;
+    t.s.intraday!.tiger.trend.score = 4;
+    m.s.intraday!.mochi.trend.score = 3;
     expect(t.brain.menu(t.ctx).LONG_BTC).toBeDefined();
     expect(m.brain.menu(m.ctx).LONG_BTC).toBeUndefined();
-    m.s.trend!.score = 9;
+    m.s.intraday!.mochi.trend.score = 9;
     m.s.vol24hUsd = 2e6;
     expect(Object.keys(m.brain.menu(m.ctx))).toEqual(["WAIT"]);
     expect(
@@ -100,7 +100,7 @@ describe("two cats and real risk differences", () => {
   it("entry/fee caps and cooldowns never prevent fresh risk-reducing exits", () => {
     for (const which of ["entries", "fees", "cooldown"]) {
       const h = riskFixture("mochi");
-      if (which === "entries") h.b.tradesToday = 2;
+      if (which === "entries") h.b.tradesToday = h.cfg.cats.mochi.maxTradesPerDay;
       if (which === "fees") h.b.feesTodayUsd = 1;
       if (which === "cooldown") h.b.lastEntryAt = NOW - 1000;
       expect(h.run().action.kind).toBe("none");
@@ -125,7 +125,7 @@ describe("two cats and real risk differences", () => {
     h.v.tickers.get(h.s.instId)!.spreadBp = 50;
     expect(h.run().vetoedBy).toBe("spread_gate");
     h.v.tickers.get(h.s.instId)!.spreadBp = 1;
-    h.s.ret1hPct = -1;
+    h.s.intraday!.tiger.momentumPct = -1;
     expect(h.run().vetoedBy).toBe("setup_no_longer_valid");
     h.b.position = position(h.s, { stopPx: 90 });
     expect(h.run().vetoedBy).toBe("one_position_limit");

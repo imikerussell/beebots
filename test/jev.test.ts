@@ -9,6 +9,7 @@ import {
   decisionConfiguration,
 } from "../src/providers.js";
 import { Db } from "../src/db.js";
+import { validateResponse } from "../src/systemone.js";
 const ask: DecisionAsk = {
   strategy: "Test",
   state: { mode: "PAPER", price: 100 },
@@ -88,6 +89,48 @@ async function mock(
 const config = () =>
   loadConfig({ DECISION_PROVIDER: "jev", TYPESAFE_API_KEY: "mock-key" });
 describe("explicit Jev selection, mock HTTP only", () => {
+  it.each(["typesafe", "vercel"])("accepts separately rounded Jev scores through %s without changing the returned numbers", async (transport) => {
+    const cfg = loadConfig({ DECISION_PROVIDER: "jev", JEV_TRANSPORT: transport,
+      TYPESAFE_API_KEY: "test-direct", AI_GATEWAY_API_KEY: "test-gateway" });
+    const raw = response();
+    raw.model = cfg.jev.model;
+    raw.answers.conviction.probabilities = { "0": 0.3, "1": 0.5, "2": 0.16, "3": 0.04 };
+    // Displayed probabilities imply 0.94; the separately rounded score can be 0.96.
+    raw.answers.conviction.score = 0.96;
+    const p = createDecisionProvider(cfg, undefined, async () => Response.json(raw));
+    expect(await p.decide(ask)).toMatchObject({ ok: true, conviction: 0.96, convictionRaw: 0.96,
+      scoreProbabilities: raw.answers.conviction.probabilities });
+    expect(p.status()).toMatchObject({ connected: true, failures: 0 });
+    // Rounding allowances are provider-specific; the local validator stays strict.
+    expect(() => validateResponse(raw, ask, raw.model, 1)).toThrow(/Score disagrees/);
+    p.close();
+  });
+  it("accepts bounded probability-sum rounding without normalizing probabilities or rounding conviction upward", () => {
+    const raw = response();
+    raw.answers.action.probabilities = { WAIT: 0.5, LONG_BTC: 0.49 };
+    raw.answers.conviction.probabilities = { "0": 0.01, "1": 0.98, "2": 0, "3": 0 };
+    raw.answers.conviction.score = 0.99;
+    expect(validateResponse(raw, ask, raw.model, 1, 2)).toMatchObject({
+      probabilities: { WAIT: 0.5, LONG_BTC: 0.49 }, conviction: 0.99, convictionRaw: 0.99,
+    });
+  });
+  it("accepts a near-tied choice within the declared precision, but rejects a materially weaker winner", () => {
+    const raw = response();
+    raw.answers.action.probabilities = { WAIT: 0.49, LONG_BTC: 0.5 };
+    expect(validateResponse(raw, ask, raw.model, 1, 2).choice).toBe("WAIT");
+    raw.answers.action.probabilities = { WAIT: 0.48, LONG_BTC: 0.52 };
+    expect(() => validateResponse(raw, ask, raw.model, 1, 2)).toThrow(/highest probability/);
+  });
+  it.each(["score", "total", "missing", "negative", "model", "legend"])("still rejects invalid %s with rounded responses", kind => {
+    const raw = response();
+    if (kind === "score") raw.answers.conviction.score = 2.04;
+    if (kind === "total") raw.answers.action.probabilities.WAIT = 0.7;
+    if (kind === "missing") delete (raw.answers.conviction.probabilities as Partial<Record<string, number>>)["3"];
+    if (kind === "negative") raw.answers.conviction.probabilities["0"] = -0.01;
+    if (kind === "model") raw.model = "unexpected";
+    if (kind === "legend") raw.answers.conviction.legend["0"] = CONVICTION[1];
+    expect(() => validateResponse(raw, ask, "jev-1.13.0", 1, 2)).toThrow();
+  });
   it("routes Vercel choice/score requests with only the gateway credential and records the route", async () => {
     const cfg = loadConfig({
       DECISION_PROVIDER: "jev", JEV_TRANSPORT: "vercel",

@@ -7,11 +7,12 @@ import {
   macd,
   pctChange,
   rsi,
-  trendStats,
+  intradayTrend,
   zScore,
 } from "./indicators.js";
 import type {
   Candle,
+  IntradaySignal,
   CoinStats,
   Instrument,
   MarketView,
@@ -36,10 +37,9 @@ export interface FeedOpts {
   allowNonCrypto: boolean;
   /** The widest cat spread gate, used for the shared universe. */
   spreadGateBps: number;
-  /** Coins that always get stats and 4h trend data. */
+  /** Coins that always get intraday trend data. */
   trendCoins: string[];
   allowedCoins?: string[];
-  breakoutK?: number;
 }
 
 const HOUR = 3_600_000;
@@ -209,16 +209,16 @@ export class MarketFeed {
         const inst = this.instruments.get(id)!;
         try {
           const isTrend = trendIds.includes(id);
-          const [c15, c1h, c4h, funding, fHist] = await Promise.all([
-            this.api.candles(id, "15m", 100),
+          const [c15, c1h, c5, funding, fHist] = await Promise.all([
+            this.api.candles(id, "15m", 200),
             this.api.candles(id, "1H", 200),
-            isTrend ? this.api.candles(id, "4H", 400) : Promise.resolve(null),
+            isTrend ? this.api.candles(id, "5m", 100) : Promise.resolve(null),
             this.api.funding(id).catch(() => null),
             this.fundingHistory(id, now),
           ]);
           requireRecentCandles(c15, 15 * 60000, now);
           requireRecentCandles(c1h, HOUR, now);
-          if (c4h) requireRecentCandles(c4h, 4 * HOUR, now);
+          if (c5) requireRecentCandles(c5, 5 * 60000, now);
           // Confirmed candles only; keep the timestamp of successful indicator refresh per instrument.
           const s = computeStats(
             inst,
@@ -233,8 +233,10 @@ export class MarketFeed {
           }
           s.oiUsd = oi.get(id) ?? null;
           s.oiChg1hPct = this.oiChange1h(id, now);
-          if (c4h) s.trend = trendStats(c4h.filter((c) => c.confirmed));
-          s.breakout = breakoutLevels(c1h, now, this.opts.breakoutK ?? BREAKOUT_K);
+          if (c5) s.intraday = {
+            tiger: intradaySignal(c5, c15, 5, 15, now),
+            mochi: intradaySignal(c15, c1h, 15, 60, now),
+          };
           next.set(id, s);
         } catch (err) {
           log.warn("market data failed for coin", {
@@ -324,4 +326,22 @@ export function breakoutLevels(
   const prevRange = Math.max(...prev.map((c) => c.h)) - Math.min(...prev.map((c) => c.l));
   if (!(prevRange > 0)) return null;
   return { dayOpen: todayOpen.o, prevRange, trigger: todayOpen.o + k * prevRange, dayStart: t0 };
+}
+
+/** Exclude the confirming bar from its own breakout threshold; reject gaps and future bars. */
+export function intradaySignal(entries: Candle[], trends: Candle[], entryMinutes: number, trendMinutes: number, now: number): IntradaySignal {
+  const complete = (bars: Candle[], minutes: number, count: number) => {
+    const period = minutes * 60000;
+    const rows = bars.filter(c => c.confirmed && c.ts + period <= now).slice(-count);
+    if (rows.length < count || rows.some((c, i) =>
+      ![c.ts,c.o,c.h,c.l,c.c].every(Number.isFinite) || c.l <= 0 || c.h < c.l || c.c < c.l || c.c > c.h ||
+      (i > 0 && c.ts - rows[i - 1]!.ts !== period))) throw new Error("Incomplete intraday candle history");
+    requireRecentCandles(rows, period, now);
+    return rows;
+  };
+  const entry = complete(entries, entryMinutes, 91), trend = complete(trends, trendMinutes, 100);
+  const last = entry.at(-1)!, prior = entry.slice(-13, -1), a = atr(entry, 14);
+  return { trend: intradayTrend(trend, 1440 / trendMinutes), confirmed: {close: last.c, ts: last.ts},
+    momentumPct: pctChange(entry.at(-4)?.c, last.c), atrPct: a === null ? null : a / last.c * 100,
+    breakout: { trigger: Math.max(...prior.map(c => c.h)), range: Math.max(...prior.map(c => c.h)) - Math.min(...prior.map(c => c.l)) } };
 }

@@ -188,6 +188,9 @@ async function coachRequest(req: IncomingMessage, res: ServerResponse, path: str
   }
   let body: unknown;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: "Invalid JSON." }); }
+  // Validate the key without changing a review or applying any strategy setting.
+  if (path === "/coach/unlock" && body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length === 0)
+    return json(res, 200, { ok: true });
   if (!body || typeof body !== "object" || Object.keys(body).length !== 1) return json(res, 400, { error: "Invalid request." });
   try {
     if (path === "/coach/reset" && "cat" in body && (body.cat === "tiger" || body.cat === "mochi"))

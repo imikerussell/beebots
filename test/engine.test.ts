@@ -152,7 +152,7 @@ describe("Catfolio engine, protection and recovery", () => {
       .get("tiger") as { audit: string };
     const audit = JSON.parse(row.audit);
     expect(audit).toMatchObject({
-      strategyVersion: "catfolio-2-breezy-bizzy",
+      strategyVersion: "catfolio-3-intraday",
       rubricVersion: "signal-strength-1",
       config: { model: "", slippageBps: 2 },
       response: { model: "mock-nimble" },
@@ -372,18 +372,18 @@ describe("Catfolio engine, protection and recovery", () => {
     await first.engine.tick();
     const original = first.engine.bees.mochi.position!.contracts;
     expect(first.engine.bees.mochi.position!.entryScore).toBe(9);
-    first.s.trend!.score = 6;
+    first.s.intraday!.mochi.trend.score = 6;
     await first.engine.tick();
     expect(first.engine.bees.mochi.position).toMatchObject({ entryScore: 9, trendTrimmed: true });
     const remaining = first.engine.bees.mochi.position!.contracts;
     expect(remaining).toBeLessThan(original);
     await first.close();
     const second = await harness(choose, { db: new Db(path) });
-    second.s.trend!.score = 6;
+    second.s.intraday!.mochi.trend.score = 6;
     await second.engine.tick();
     expect(second.engine.bees.mochi.position!.contracts).toBe(remaining);
     expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trim'").all()).toHaveLength(1);
-    second.s.trend!.score = 0;
+    second.s.intraday!.mochi.trend.score = 0;
     await second.engine.protectiveTick();
     expect(second.engine.bees.mochi.position).toBeNull();
     expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trend_lost'").all()).toHaveLength(1);
@@ -545,7 +545,8 @@ describe("coach approval in the running engine", () => {
     const h = await harness(async (ask) => answer(ask, ask.menu.LONG_BTC ? "LONG_BTC" : "WAIT"), {
       cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
     });
-    h.s.trend!.score = 2;
+    h.s.intraday!.tiger.trend.score = 2;
+    h.s.intraday!.mochi.trend.score = 2;
     await h.engine.tick(); seedHistory(h.db);
     expect(h.engine.bees.tiger.position).toBeNull();
     await h.engine.coach.tick();
@@ -555,11 +556,11 @@ describe("coach approval in the running engine", () => {
     h.engine.coach.resolve(pending.id, "accept");
     expect(h.engine.bees.tiger.position).toBeNull();
     await h.engine.tick(); expect(h.engine.bees.tiger.position).not.toBeNull();
-    expect(h.engine.bees.tiger.position!.stopPx).toBe(99);
+    expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(h.engine.bees.tiger.position!.entryPx * 0.99);
     expect(h.engine.bees.mochi.position).toBeNull();
     h.engine.coach.reset("tiger");
     expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
-    expect(h.engine.bees.tiger.position!.stopPx).toBe(99);
+    expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(h.engine.bees.tiger.position!.entryPx * 0.99);
   });
   it("discards in-flight decisions when an approved threshold changes", async () => {
     let slow = false;
@@ -567,7 +568,8 @@ describe("coach approval in the running engine", () => {
     const h = await harness(async (ask) => slow ? new Promise((resolve) => releases.push(() => resolve(answer(ask)))) : answer(ask), {
       cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
     });
-    h.s.trend!.score = 2;
+    h.s.intraday!.tiger.trend.score = 2;
+    h.s.intraday!.mochi.trend.score = 2;
     await h.engine.tick(); seedHistory(h.db); await h.engine.coach.tick();
     slow = true;
     const pending = h.engine.tick();

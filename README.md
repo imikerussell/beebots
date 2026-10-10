@@ -69,6 +69,8 @@ DB_PATH=./data/catfolio-jev-night1-{mode}.sqlite
 
 The default is the upstream pinned Jev model; use a supported **versioned** identifier, not a moving alias. The direct HTTP adapter follows the [official TypeSafe API](https://docs.typesafe.ai/api) and shares the same typed response validator with LM Studio. It does not use chat generation.
 
+Jev returns probabilities and scores rounded separately to two decimals, as declared by the [official TypeSafe AI SDK adapter](https://github.com/vercel/ai/blob/main/packages/typesafe-ai/src/typesafe-ai-decision-model.ts). Its validator allows bounded rounding differences in probability totals, near-tied choices and weighted scores. It preserves the returned numbers: no probability normalization, conviction rounding-up or entry-threshold changes. Missing fields, out-of-range values, wrong model/rubric and larger inconsistencies still fail closed. Local LM Studio responses retain the stricter validation.
+
 For a **Vercel AI Gateway key**, select the gateway explicitly instead:
 
 ```dotenv
@@ -104,7 +106,7 @@ Jev compatibility is covered by a credential-free mock HTTP server. No paid Jev 
 
 ## Daily strategy coach
 
-The dashboard includes an AI coach inspired by the original Beekeeper. The upstream implementation used a scheduled Zapier workflow, a scorecard, short-lived rewrite credentials, and strategy overlays. Catfolio now reviews each cat separately through Vercel and requires **Accept suggestion** before applying a change.
+The dashboard includes an AI coach inspired by the original Beekeeper. The upstream implementation used a scheduled Zapier workflow, a scorecard, short-lived rewrite credentials, and strategy overlays. Catfolio now reviews each cat separately through Vercel and requires **Approve suggestion** before applying a change.
 
 Use your existing `AI_GATEWAY_API_KEY` on the engine. The coach automatically enables when that key is present, independently of `DECISION_PROVIDER`. Set `COACH_ENABLED=false` to disable new reviews. Its separate text model defaults to `COACH_MODEL=anthropic/claude-sonnet-4.6`; Jev remains the trading decision model when selected. Requests use Vercel's [OpenAI-compatible chat API](https://vercel.com/docs/ai-gateway/openai-compat/rest-api). Coaching calls are billed through Vercel separately from the Jev spending estimate/cap, with at most two bounded requests per 24 hours for this database.
 
@@ -112,15 +114,15 @@ To enable dashboard approvals:
 
 1. Generate a separate owner key with `openssl rand -hex 32` and put it in the engine's `.env` as `COACH_ADMIN_TOKEN` (minimum 24 characters).
 2. Rebuild and restart the engine and dashboard. With Docker: `docker compose up -d --build`.
-3. Enter that owner key in **Daily strategy coach** on the dashboard. It stays in page memory and is sent only to the engine for review actions. Never enter your Vercel API key in the dashboard. Use HTTPS if exposing the dashboard beyond localhost.
+3. Click **you a trainer?** in the dashboard’s top-right corner and enter that owner key. A valid key unlocks suggestions inside each cat’s existing card; use **Approve suggestion** or **Discard** there. **Trainer activity** in the top-right shows observation progress, scheduler checks, the review model, in-progress reviews, last results and the next eligible review. Its links open each cat’s review and visible history. The key is stored in this tab’s session storage, survives refresh, and is revalidated against the engine before coaching is revealed. Temporary connection failures retain it for retry. **Exit trainer mode & forget key** clears access; invalid keys are also cleared. The key is sent only to the engine for trainer access and review actions. Never enter your Vercel API key in the dashboard. Use HTTPS if exposing the dashboard beyond localhost.
 
 The first review needs at least an hour of observations and 30 model decisions. Each cat gets at most one attempt per rolling 24 hours and per UTC day, including failures and restarts. Reviews summarize the previous 24 hours: WAIT versus HOLD, menus offering only WAIT, entry blockers from the same checks that build the trading menu, model failures, risk vetoes, fills, current portfolio, and market conditions. Only this scoped trading evidence and strategy facts go to the review model; credentials and full configuration do not. Insufficient evidence waits; unavailable providers produce a visible failed review and retry at the next daily opportunity. Closed experiments stop coaching.
 
 The coach can recommend **no change**, or one bounded adjustment to minimum trend score, action probability, or conviction. Each proposal includes an explanation, exact before/after value, and downside. Changes must have matching blocker evidence and pass server validation. Trend and conviction move at most one point per review and one point from the original settings. Action probability stays within 50–95%, changes by at most five percentage points, and stays within ten percentage points of the original setting. Stops, loss limits, position sizes, fees, cooldowns, entry caps, permitted coins, breakout confirmation and exit rules cannot be rewritten. Waiting alone does not justify relaxing rules.
 
-**Accept suggestion** persists the approved threshold in the run database and updates the next decision without a restart or immediate order. Acceptance is refused while the cat holds a position, after settings change, or after the suggestion expires (24 hours). **Decline** records your decision without changing settings. **Restore original thresholds** clears all coach adjustments for that cat. In-flight model decisions from older settings are discarded. Accepted settings persist until restored; explicit changes to the three original threshold environment values take precedence on restart. The dashboard shows current effective values and recent review history; complete review and approval records remain in SQLite.
+**Approve suggestion** persists the approved threshold in the run database and updates the next decision without a restart or immediate order. Acceptance is refused while the cat holds a position, after settings change, or after the suggestion expires (24 hours). **Discard** records your decision without changing settings. **Restore original thresholds** clears all coach adjustments for that cat. In-flight model decisions from older settings are discarded. Accepted settings persist until restored; explicit changes to the three original threshold environment values take precedence on restart. The dashboard shows current effective values and recent review history; complete review and approval records remain in SQLite.
 
-Read access remains public (`GET /coach` and the snapshot). `POST /coach/accept`, `/coach/decline`, and `/coach/reset` require the separate owner bearer key and a JSON body. The gateway credential is never served to the browser.
+Read access remains public (`GET /coach` and the snapshot). `POST /coach/unlock` validates trainer access without changing a review. `/coach/accept`, `/coach/decline`, and `/coach/reset` require the separate owner bearer key and a JSON body. The gateway credential is never served to the browser.
 
 ## LM Studio and Nimble 9B
 
@@ -162,13 +164,14 @@ Explicitly loaded models have no TTL by default ([LM Studio loading/TTL document
 | PAPER default | Tiger | Mochi |
 |---|---|---|
 | Universe | BTC, ETH, SOL | BTC, ETH |
-| Style | Bizzy daily volatility breakout | Breezy nine-channel trend |
+| Style | 5m breakout / 15m trend | 15m entries / 1h trend |
 | Directions | Long only | Long only |
-| Maximum notional / own equity | 100% | 50% |
-| Initial stop risk budget / own equity | 1% | 0.25% |
+| Maximum notional / own equity | 50% | 50% |
+| Initial stop risk budget / own equity | 0.5% | 0.25% |
 | Daily loss stop | 5% | 2% |
-| New entries / UTC day | 1 | 2 |
-| Minimum entry cooldown | 10 min | 30 min |
+| New entries / UTC day | 8 | 4 |
+| Minimum entry cooldown | 15 min | 30 min |
+| Maximum holding time | 2 hours | 6 hours |
 | Maximum spread | 10 bps | 3 bps |
 | Minimum 24h volume | $1 million | $10 million |
 | Minimum action probability | 0.55 | 0.70 |
@@ -176,13 +179,15 @@ Explicitly loaded models have no TTL by default ([LM Studio loading/TTL document
 
 The active strategies are documented in [Catfolio strategies](strategies/CATFOLIO.md). The original [Breezy](strategies/BREEZY_BEE.md) and [Bizzy](strategies/BIZZY_BEE.md) documents are preserved as historical references.
 
-**Mochi restores Breezy's calculation:** nine Donchian channels on completed four-hour bars, strongest BTC/ETH selection, score- and volatility-based sizing, a 2 × four-hour ATR initial stop, and ratcheting channel-midpoint exits. Score ≥6, no short slices and complete volatility data are required. A three-point score decline offers one half-trim per position; score ≤0 closes deterministically. The volatility ceiling is 25% annualized, estimated from 90 four-hour returns. The feed retrieves 400 four-hour bars to cover all nine lookbacks. This retains upstream's four-hour adaptation; it does **not** reproduce the published daily-bar research portfolio.
+**Tiger: fast intraday breakout.** A completed five-minute close must exceed the high of the preceding twelve five-minute candles, with positive 15-minute momentum and a 15-minute trend score ≥3. No daily breakout or four-hour gate remains. Skip chasing more than 25% of the preceding hour's range; funding must be known and ≤0.03%. Initial stop is 2 × five-minute ATR, with channel trailing, lost-trend exit and a two-hour maximum hold.
 
-**Tiger restores Bizzy's current daily breakout:** today's UTC open + 0.5 × yesterday's complete high–low range. A completed 15-minute close must confirm the break, alongside positive one-hour momentum and four-hour trend score ≥3. Price must remain within 0.25 × yesterday's range above the trigger. Funding must be known and ≤0.03% per settlement. The stop is the entry day's open and code exits at 23:59 UTC even without the model. Default one entry per UTC day and no entry within 60 minutes of that exit. This replaces the earlier generic long/short momentum wrapper; the former RSI fade is historical, not Bizzy's current upstream strategy.
+**Mochi: hourly trend following.** Use hourly trend score ≥4 with no bearish channels, positive 45-minute momentum from completed fifteen-minute candles, and strongest BTC/ETH selection. Initial stop is 2 × hourly ATR. Score and correctly annualized 90-hour volatility determine sizing. Channel trailing, lost-trend exits, a three-point one-time half-trim and a six-hour holding limit manage positions.
+
+Both use nine shorter Donchian lookbacks: 3, 5, 8, 12, 18, 24, 36, 48 and 72 bars. The feed requests 100 five-minute, 200 fifteen-minute and 200 hourly candles per coin; unfinished candles are excluded and missing/stale histories block entries. Before entry, the initial ATR stop distance must exceed twice estimated round-trip fees, spread and slippage. This filters tiny movements; it does not forecast profitability. More frequent opportunities can also mean more false signals and trading costs. Strategy version `catfolio-3-intraday` separates the new audit records from the previous daily/four-hour rules.
 
 See `.env.example` for tunable parameters. Confirmed-bar, trend, funding and no-chase filters are conservative experimental adaptations, not backtest-optimized claims. Both strategies permit cash. The dashboard's “How … trades” panels show rules from the effective configuration.
 
-Sizing floors contracts to the exchange lot size after taking the minimum of the cat's equity-based notional cap, stop-distance risk budget (including estimated entry/exit fees), and available capital. Only linear OKX EEA USD-margined X-Perps are supported; contract value/multiplier and minimum lot specifications come from the exchange. Undersized trades are skipped, never rounded up to make a trade happen. No martingale, averaging down, adds, forced entry, “never flat”, position switching, or exposure-increasing rebalance exists in the active engine. The active cat brains reuse Breezy's sizing/stop/trail and Bizzy's stop/day-exit components; only `catBrain(tiger)` and `catBrain(mochi)` are scheduled.
+Sizing floors contracts to the exchange lot size after taking the minimum of the cat's equity-based notional cap, stop-distance risk budget (including estimated entry/exit fees), and available capital. Only linear OKX EEA USD-margined X-Perps are supported; contract value/multiplier and minimum lot specifications come from the exchange. Undersized trades are skipped, never rounded up to make a trade happen. No martingale, averaging down, adds, forced entry, “never flat”, position switching, or exposure-increasing rebalance exists in the active engine. The active cat brains implement intraday sizing, ATR stops, channel trails and holding limits; only `catBrain(tiger)` and `catBrain(mochi)` are scheduled.
 
 **Stop-distance risk is a sizing estimate, not a maximum realized loss guarantee.** Gaps, spread changes, latency and slippage can exceed it. The loss/entry/fee limits are independent per cat. Entry, fee and cooldown caps never prevent fresh risk-reducing exits. Both cats can WAIT while flat or HOLD/CLOSE while positioned; even a whole night without entries can be correct. Stops and loss limits override HOLD.
 

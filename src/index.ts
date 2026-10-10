@@ -47,7 +47,6 @@ async function main() {
         cfg.cats.tiger.spreadGateBps,
         cfg.cats.mochi.spreadGateBps,
       ),
-      breakoutK: cfg.strategies.tiger.breakoutK,
       trendCoins: ["BTC", "ETH", "SOL"],
       allowedCoins: ["BTC", "ETH", "SOL"],
     },

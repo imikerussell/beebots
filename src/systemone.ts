@@ -19,6 +19,7 @@ const bounded = (x: unknown, max: number, name: string): number => {
 export function probabilities(
   x: unknown,
   labels: string[],
+  roundingDecimals?: number,
 ): Record<string, number> {
   const p = object(x, "probabilities");
   if (
@@ -29,7 +30,9 @@ export function probabilities(
   const out = Object.fromEntries(
     labels.map((l) => [l, bounded(p[l], 1, `probability ${l}`)]),
   );
-  if (Math.abs(Object.values(out).reduce((a, b) => a + b, 0) - 1) > 0.001)
+  // Independently rounded probabilities can sum slightly above/below one.
+  const tolerance = roundingDecimals === undefined ? 0.001 : labels.length * 0.5 * 10 ** -roundingDecimals;
+  if (Math.abs(Object.values(out).reduce((a, b) => a + b, 0) - 1) > tolerance + 1e-10)
     throw new Error("Probabilities do not sum to one");
   return out;
 }
@@ -38,6 +41,7 @@ export function validateResponse(
   ask: DecisionAsk,
   model: string,
   latencyMs: number,
+  roundingDecimals?: number,
 ): DecisionAnswer {
   const r = object(raw, "response"),
     answers = object(r.answers, "answers");
@@ -52,14 +56,19 @@ export function validateResponse(
   const labels = Object.keys(ask.menu);
   if (typeof a.choice !== "string" || !labels.includes(a.choice))
     throw new Error("Choice is not in the submitted menu");
-  const p = probabilities(a.probabilities, labels);
-  if (p[a.choice]! + 0.001 < Math.max(...Object.values(p)))
+  const halfQuantum = roundingDecimals === undefined ? 0 : 0.5 * 10 ** -roundingDecimals;
+  const p = probabilities(a.probabilities, labels, roundingDecimals);
+  if (p[a.choice]! + Math.max(0.001, 2 * halfQuantum) + 1e-10 < Math.max(...Object.values(p)))
     throw new Error("Choice is not a highest probability option");
   const levels = ask.convictionLabels.map((_, i) => String(i));
-  const sp = probabilities(c.probabilities, levels);
+  const sp = probabilities(c.probabilities, levels, roundingDecimals);
   const score = bounded(c.score, levels.length - 1, "conviction score");
   const expected = levels.reduce((sum, l) => sum + Number(l) * sp[l]!, 0);
-  if (Math.abs(score - expected) > 0.01)
+  // The score and each probability are rounded separately. Bound the accumulated
+  // weighted rounding error, including half a quantum for the score itself.
+  const scoreTolerance = roundingDecimals === undefined ? 0.01
+    : halfQuantum * (1 + levels.reduce((sum, l) => sum + Number(l), 0));
+  if (Math.abs(score - expected) > scoreTolerance + 1e-10)
     throw new Error("Score disagrees with score probabilities");
   const legend = object(c.legend, "score legend");
   if (levels.some((l) => legend[l] !== ask.convictionLabels[Number(l)]))
@@ -96,6 +105,8 @@ export interface SystemOneOptions {
   label: string;
   requireToken?: boolean;
   configurationHint: string;
+  /** Provider-declared decimal precision; local models retain strict validation. */
+  responseDecimals?: number;
 }
 export interface SystemOneHooks {
   preflight?: (
@@ -259,6 +270,7 @@ export class SystemOneClient implements DecisionProvider {
         ask,
         this.opts.model,
         Math.round(performance.now() - start),
+        this.opts.responseDecimals,
       );
       result.metadata = loaded;
       result.costUsd = costUsd;

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { EquityChart } from "./EquityChart";
 import type { Cat, CatId, Profile, Snapshot } from "./types";
 import type { Curve } from "./useFeed";
@@ -44,12 +45,14 @@ export function CatCard({
   meta,
   curve,
   snap,
+  coaching,
 }: {
   id: CatId;
   cat?: Cat;
   meta?: Profile["cats"][number];
   curve?: Curve;
   snap: Snapshot | null;
+  coaching?: ReactNode;
 }) {
   const identity = CAT_META[id];
   const name = catName(id, cat?.name ?? meta?.name);
@@ -175,6 +178,7 @@ export function CatCard({
           )}
           {cat?.cap && <div className="negative">Entry limit: {cat.cap}</div>}
         </div>
+        {coaching}
         <dl className="metrics">
           {metrics.map(([label, value]) => (
             <div key={label}>
@@ -209,8 +213,8 @@ export function CatCard({
           <p>
             {meta?.tagline ??
               (id === "tiger"
-                ? "Bizzy’s daily breakout"
-                : "Breezy’s calculated trend")}
+                ? "Fast intraday breakout"
+                : "Intraday trend follower")}
           </p>
           {meta?.strategyFacts?.length ? (
             <ul>

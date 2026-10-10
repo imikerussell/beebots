@@ -72,7 +72,8 @@ export interface CoinStats {
   // news (kit news module; null when unavailable)
   newsZ: number | null;
   sentiment: number | null;
-  // 4h trend (breezy's coins only)
+  intraday?: { tiger: IntradaySignal; mochi: IntradaySignal };
+  // Historical 4h trend (legacy strategy components only)
   trend?: TrendStats;
   /** Larry Williams volatility breakout (bizzy): today's UTC open + k x yesterday's range, from 1h bars. */
   breakout?: { dayOpen: number; prevRange: number; trigger: number; dayStart?: number } | null;
@@ -102,4 +103,13 @@ export interface MarketView {
   /** Coins that passed volume but failed the spread gate (for "boozy wanted RAY" moments). */
   spreadBlocked: string[];
   newsAvailable: boolean;
+}
+
+/** Active intraday inputs, built exclusively from completed candles. */
+export interface IntradaySignal {
+  trend: Omit<TrendStats, "atr4hPct" | "tenDayExtreme"> & { atrPct: number | null; recentExtreme: -1 | 0 | 1 };
+  confirmed: { close: number; ts: number };
+  momentumPct: number | null;
+  atrPct: number | null;
+  breakout: { trigger: number; range: number } | null;
 }

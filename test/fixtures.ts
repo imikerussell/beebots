@@ -55,6 +55,7 @@ export function coin(
     oiChg1hPct: 0,
     newsZ: null,
     sentiment: null,
+    intraday: intraday(),
     ...over,
   };
 }
@@ -159,4 +160,13 @@ export function ctx(
         ? b.uplUsd / b.position.riskUsd
         : null,
   };
+}
+
+export function intraday() {
+  const signal = (minutes: number) => ({
+    trend: { score: 9, longOn: 9, shortOn: 0, slicesAvailable: 9, atrPct: 1.5, rv90Pct: 50, trailStop: null as number | null, recentExtreme: 0 as -1 | 0 | 1 },
+    confirmed: {close: 100.1, ts: NOW - minutes * 60000}, momentumPct: 1 as number | null,
+    atrPct: 0.5 as number | null, breakout: {trigger: 100, range: 2} as {trigger: number; range: number} | null,
+  });
+  return { tiger: signal(5), mochi: signal(15) };
 }

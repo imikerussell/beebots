@@ -56,8 +56,8 @@ export interface Config {
   };
   coach: { enabled: boolean; apiKey?: string; adminToken?: string; model: string };
   strategies: {
-    tiger: { breakoutK: number; maxChaseRangeFrac: number; minMinutesToClose: number; maxFundingPct: number };
-    mochi: { volTargetPct: number; trimScoreDrop: number };
+    tiger: { maxChaseRangeFrac: number; maxFundingPct: number; maxHoldMinutes: number };
+    mochi: { volTargetPct: number; trimScoreDrop: number; maxHoldMinutes: number };
   };
   slots: Record<BeeId, SlotProfile>;
   cats: Record<BeeId, CatLimits>;
@@ -191,8 +191,8 @@ export function loadConfig(
     cats[id] = {
       allocationPct: allocation,
       startEquityUsd: (total * allocation) / 100,
-      maxNotionalPct: num(`${p}_MAX_NOTIONAL_PCT`, tiger ? 100 : 50, 0.01, 100),
-      stopRiskPct: num(`${p}_STOP_RISK_PCT`, tiger ? 1 : 0.25, 0.001, 10),
+      maxNotionalPct: num(`${p}_MAX_NOTIONAL_PCT`, 50, 0.01, 100),
+      stopRiskPct: num(`${p}_STOP_RISK_PCT`, tiger ? 0.5 : 0.25, 0.001, 10),
       dailyLossStopPct: num(
         `${p}_DAILY_LOSS_STOP_PCT`,
         tiger ? 5 : 2,
@@ -201,12 +201,12 @@ export function loadConfig(
       ),
       maxTradesPerDay: num(
         `${p}_MAX_ENTRIES_PER_DAY`,
-        tiger ? 1 : 2,
+        tiger ? 8 : 4,
         0,
         1000,
         true,
       ),
-      cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? 10 : 30, 0),
+      cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? 15 : 30, 0),
       spreadGateBps: num(`${p}_SPREAD_GATE_BPS`, tiger ? 10 : 3, 0.01, 100),
       minVolumeUsd: num(`${p}_MIN_24H_VOLUME_USD`, tiger ? 1e6 : 10e6, 0),
       feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, tiger ? 2 : 1, 0),
@@ -217,7 +217,7 @@ export function loadConfig(
         1,
       ),
       minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3, true),
-      minTrendScore: num(`${p}_MIN_TREND_SCORE`, tiger ? 3 : 6, 1, 9, true),
+      minTrendScore: num(`${p}_MIN_TREND_SCORE`, tiger ? 3 : 4, 1, 9, true),
       stopAtrMult: num(`${p}_STOP_ATR_MULT`, 2, 0.1, 20),
       longOnly: true,
       maxFlatMinutes: Infinity,
@@ -230,12 +230,12 @@ export function loadConfig(
     slots[id] = {
       name: str(`${p}_NAME`, saved?.name ?? (tiger ? "DARK Wall-E" : "Good Wall-E")),
       style: tiger ? "bizzy" : "breezy",
-      tagline: tiger ? "Bizzy’s daily breakout" : "Breezy’s calculated trend",
+      tagline: tiger ? "Fast intraday breakout" : "Intraday trend follower",
       rules:
         saved?.rules ??
         (tiger
-          ? "Trade a confirmed daily volatility breakout, avoid chasing, and close before UTC midnight. WAIT is valid."
-          : "Follow the nine-channel 4h Donchian ensemble with volatility sizing and channel trailing stops. Keep cash without a strong trend."),
+          ? "Trade confirmed five-minute breakouts with a supportive fifteen-minute trend. Avoid chasing; exit within two hours. WAIT is valid."
+          : "Follow an hourly intraday trend with fifteen-minute entry checks, volatility sizing and channel trailing stops. Exit within six hours. Keep cash without a strong trend."),
       coins: tiger ? ["BTC", "ETH", "SOL"] : ["BTC", "ETH"],
       customImage: false,
       fromSetup: !!saved,
@@ -282,14 +282,14 @@ export function loadConfig(
     },
     strategies: {
       tiger: {
-        breakoutK: num("TIGER_BREAKOUT_K", 0.5, 0.1, 2),
         maxChaseRangeFrac: num("TIGER_MAX_CHASE_RANGE_FRAC", 0.25, 0, 2),
-        minMinutesToClose: num("TIGER_MIN_MINUTES_TO_CLOSE", 60, 2, 720),
         maxFundingPct: num("TIGER_MAX_FUNDING_PCT", 0.03, 0, 1),
+        maxHoldMinutes: num("TIGER_MAX_HOLD_MINUTES", 120, 5, 1440),
       },
       mochi: {
         volTargetPct: num("MOCHI_VOL_TARGET_PCT", 25, 0.1, 100),
         trimScoreDrop: num("MOCHI_TRIM_SCORE_DROP", 3, 1, 9, true),
+        maxHoldMinutes: num("MOCHI_MAX_HOLD_MINUTES", 360, 15, 2880),
       },
     },
     mode,

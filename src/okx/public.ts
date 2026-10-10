@@ -18,7 +18,7 @@ export interface PublicApi {
   tickers(): Promise<Map<string, Ticker>>;
   candles(
     instId: string,
-    bar: "15m" | "1H" | "4H",
+    bar: "5m" | "15m" | "1H" | "4H",
     limit: number,
   ): Promise<Candle[]>;
   openInterest(): Promise<Map<string, number>>;

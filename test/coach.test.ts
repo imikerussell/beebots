@@ -33,12 +33,12 @@ function harness(options: { answer?: unknown; seed?: boolean; enabled?: boolean;
 }
 describe("daily cat coach", () => {
   it("uses the real entry gates for explanations and keeps absent breakouts blocked", () => {
-    const h = riskFixture(); h.s.trend!.score = 2;
+    const h = riskFixture(); h.s.intraday!.tiger.trend.score = 2;
     expect(entryDiagnostics("tiger", h.ctx)[0]!.blockers).toContain("minTrendScore");
     expect(h.brain.menu(h.ctx).LONG_BTC).toBeUndefined();
     h.cfg.cats.tiger.minTrendScore = 2;
     expect(catBrain("tiger", h.cfg).menu(h.ctx).LONG_BTC).toBeDefined();
-    h.s.confirmed15m!.close = 98;
+    h.s.intraday!.tiger.confirmed.close = 98;
     expect(entryDiagnostics("tiger", h.ctx)[0]!.blockers).toContain("breakout_not_confirmed");
     expect(catBrain("tiger", h.cfg).menu(h.ctx).LONG_BTC).toBeUndefined();
   });
@@ -54,7 +54,7 @@ describe("daily cat coach", () => {
     const capital = h.cfg.cats.tiger.stopRiskPct;
     h.coach.resolve(entry.id, "accept");
     expect(h.cfg.cats.tiger.minTrendScore).toBe(2); expect(h.cfg.cats.tiger.stopRiskPct).toBe(capital);
-    expect(h.cfg.cats.mochi.minTrendScore).toBe(6);
+    expect(h.cfg.cats.mochi.minTrendScore).toBe(4);
     expect(() => h.coach.resolve(entry.id, "accept")).toThrow(/no longer/);
     const newCfg = loadConfig({});
     const restarted = new CatCoach({ ...h.deps, cfg: newCfg });
@@ -140,6 +140,52 @@ describe("daily cat coach", () => {
     expect(entry.status).toBe("pending"); expect(entry.evidence).toMatchObject({ summary: { weakProbability: 31, weakConviction: 0 } });
     h.coach.resolve(entry.id, "accept"); expect(h.cfg.cats.tiger.minActionProbability).toBe(0.5);
   });
+  it("reports observation progress and the actual review lifecycle", async () => {
+    const h = harness({ seed: false });
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "gathering", observations: 0, observedMinutes: 0, reviewCount: 0, nextReviewAt: null });
+    observations(h.db, "tiger", h.now(), 10);
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "gathering", observations: 10, observedMinutes: 60 });
+    await h.coach.tick(); expect(h.fetcher).not.toHaveBeenCalled();
+    observations(h.db, "tiger", h.now(), 20);
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "queued", observations: 30 });
+    let release!: (response: Response) => void;
+    h.fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const task = h.coach.tick();
+    expect(h.coach.state()).toMatchObject({ checkedAt: h.now(), cats: [{ cat: "tiger", phase: "reviewing", reviewCount: 1 }, { cat: "mochi", phase: "gathering" }] });
+    h.advance(500);
+    release(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ diagnosis: "Trend score blocked entry", rationale: "A small adjustment", tradeoff: "False signals", change: { field: "minTrendScore", from: 3, to: 2 } }) } }] })));
+    await task;
+    expect(h.coach.state().cats[0]!.phase).toBe("awaiting_approval");
+    const entry = h.coach.state().entries[0]!;
+    expect(entry.completedAt).toBe(h.now()); expect(entry.error).toBeNull();
+    h.coach.resolve(entry.id, "decline");
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "scheduled", reviewCount: 1, nextReviewAt: NOW + DAY });
+    h.advance(DAY); observations(h.db, "tiger", h.now());
+    expect(h.coach.state().cats[0]!.phase).toBe("queued");
+  });
+  it("requires an hour even when enough decisions arrive early", async () => {
+    const h = harness();
+    h.db.raw.prepare("UPDATE decisions SET ts=?").run(h.now() - 20 * 60_000);
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "gathering", observations: 31, observedMinutes: 20, nextReviewAt: h.now() + 40 * 60_000 });
+    await h.coach.tick(); expect(h.fetcher).not.toHaveBeenCalled();
+    h.advance(40 * 60_000);
+    expect(h.coach.state().cats[0]!.phase).toBe("queued");
+  });
+  it("reports disabled coaching even when enough evidence exists", () => {
+    const h = harness({ enabled: false });
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "paused", observations: 31, reviewCount: 0 });
+  });
+  it.each([[401, "credential"], [402, "credit"], [429, "rate-limited"], [500, "unsuccessful"]])("explains provider HTTP %i without storing its error body", async (status, expected) => {
+    const h = harness();
+    h.fetcher.mockResolvedValueOnce(new Response("private-gateway-key", { status: Number(status) }));
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]).toMatchObject({ status: "failed", completedAt: h.now() });
+    expect(h.coach.state().entries[0]!.error).toContain(expected);
+    expect(JSON.stringify(h.coach.state())).not.toContain("private-gateway-key");
+    expect(h.coach.state().cats[0]!.phase).toBe("scheduled");
+    const restarted = new CatCoach(h.deps);
+    expect(restarted.state().entries[0]!.error).toContain(expected);
+  });
   it("requires owner authorization for mutations, serves no secrets, and applies an authenticated dashboard approval", async () => {
     const h = harness(); await h.coach.tick(); const id = h.coach.state().entries[0]!.id;
     const server = startServer({ profile: () => ({}), engine: { db: h.db, bus: new EventBus(h.db), visitors: new Visitors(h.db), snapshot: () => ({}), health: () => ({ ok: true }), coach: h.coach, coachAdminToken: h.cfg.coach.adminToken } }, 0, "127.0.0.1");
@@ -150,6 +196,12 @@ describe("daily cat coach", () => {
     const state = await (await fetch(`${url}/coach`)).text();
     expect(state).not.toContain("private-gateway-key"); expect(state).not.toContain(h.cfg.coach.adminToken);
     const post = (token?: string) => fetch(`${url}/coach/accept`, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ id }) });
+    const unlock = (token: string) => fetch(`${url}/coach/unlock`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: "{}" });
+    expect((await unlock("wrong")).status).toBe(401);
+    const unlocked = await unlock(h.cfg.coach.adminToken!);
+    expect(unlocked.status).toBe(200); expect(await unlocked.json()).toEqual({ ok: true });
+    expect(h.coach.state().entries[0]!.status).toBe("pending");
+    expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
     expect((await post()).status).toBe(401); expect((await post("wrong")).status).toBe(401);
     expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
     expect((await post(h.cfg.coach.adminToken)).status).toBe(200);

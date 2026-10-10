@@ -31,6 +31,9 @@ export class Jev extends SystemOneClient {
         maxOptions: 26,
         label: opts.transport === "vercel" ? "Jev cloud (Vercel)" : "Jev cloud",
         requireToken: true,
+        // TypeSafe's API rounds probabilities and scores to two decimal places.
+        // https://github.com/vercel/ai/blob/main/packages/typesafe-ai/src/typesafe-ai-decision-model.ts
+        responseDecimals: 2,
         configurationHint:
           opts.transport === "vercel"
             ? "Set AI_GATEWAY_API_KEY and JEV_MODEL=typesafe-ai/jev"

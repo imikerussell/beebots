@@ -168,3 +168,14 @@ export function trendStats(c4h: Candle[]): TrendStats {
     tenDayExtreme,
   };
 }
+
+/** Short intraday horizons: 45m–18h on 15m bars; 3h–3d on hourly bars. */
+export const INTRADAY_LOOKBACKS = [3, 5, 8, 12, 18, 24, 36, 48, 72] as const;
+export function intradayTrend(candles: Candle[], barsPerDay: number) {
+  const closes = candles.map(c => c.c), last = closes.at(-1);
+  const a = atr(candles, 14), window = closes.slice(-24);
+  const recentExtreme: -1 | 0 | 1 = last === undefined ? 0 : last >= Math.max(...window) ? 1 : last <= Math.min(...window) ? -1 : 0;
+  return { ...donchianEnsemble(closes, INTRADAY_LOOKBACKS),
+    atrPct: a !== null && last ? a / last * 100 : null,
+    rv90Pct: realisedVolPct(closes, 90, barsPerDay * 365), recentExtreme };
+}

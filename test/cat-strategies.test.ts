@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { riskFixture } from "./risk-fixture.js";
-import { NOW, position, coin, trend, view } from "./fixtures.js";
+import { NOW, position, coin, view } from "./fixtures.js";
 import { breakoutLevels } from "../src/market/data.js";
 import { donchianEnsemble } from "../src/market/indicators.js";
 import { loadConfig } from "../src/config.js";
 import type { Candle } from "../src/market/types.js";
 
 const DAY = 86400000, dayStart = Math.floor(NOW / DAY) * DAY;
-describe("restored Breezy / Mochi rules", () => {
-  it("uses the 4h stop and channel trail, independently of 15m noise", () => {
+describe("intraday Mochi rules", () => {
+  it("uses the hourly stop and channel trail, independently of 15m noise", () => {
     const h = riskFixture("mochi");
     h.s.atr14Pct = 99;
     expect(h.brain.stopFor(h.s.instId, "long", 100, h.ctx)).toBe(97);
     h.b.position = position(h.s);
-    h.s.trend!.trailStop = 98;
+    h.s.intraday!.mochi.trend.trailStop = 98;
     expect(h.brain.trail!(h.ctx)).toBe(98);
     h.s.refreshedAt = NOW - 4 * h.cfg.dataRefreshMs;
     expect(h.brain.trail!(h.ctx)).toBeNull();
@@ -21,38 +21,39 @@ describe("restored Breezy / Mochi rules", () => {
   it("sizes from score and measured volatility, without an exposure floor", () => {
     const h = riskFixture("mochi");
     h.cfg.cats.mochi.stopRiskPct = 10; // Make the notional cap binding to test the volatility constraint.
-    h.s.trend!.score = 6;
+    h.s.intraday!.mochi.trend.score = 6;
     expect(h.brain.sizeFrac(h.proposal.intent as never, 3, h.ctx)).toBeCloseTo(6 / 9);
     const calm = h.run().action;
-    h.s.trend!.rv90Pct = 200;
+    h.s.intraday!.mochi.trend.rv90Pct = 200;
     expect(h.brain.sizeFrac(h.proposal.intent as never, 3, h.ctx)).toBe(0.25);
     const volatile = h.run().action;
     expect(calm.kind).toBe("open"); expect(volatile.kind).toBe("open");
     if (calm.kind === "open" && volatile.kind === "open") expect(volatile.notionalUsd).toBeLessThan(calm.notionalUsd);
     for (const rv of [null, NaN, Infinity, 0, -1]) {
-      h.s.trend!.rv90Pct = rv;
+      h.s.intraday!.mochi.trend.rv90Pct = rv;
       expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT"]);
     }
   });
-  it("selects the strongest coin, then the 10-day high; short-term MACD cannot replace the trend", () => {
+  it("selects the strongest coin, then the recent high; short-term MACD cannot replace the trend", () => {
     const h = riskFixture("mochi");
-    const eth = coin("ETH", { trend: trend({ score: 9, longOn: 9, tenDayExtreme: 1 }) });
+    const eth = coin("ETH");
+    eth.intraday!.mochi.trend.recentExtreme = 1;
     h.ctx.view = view([h.s, eth]);
     h.s.ret1hPct = -0.1; h.s.macdHistPct = -0.1;
     expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT", "LONG_ETH"]);
-    eth.trend!.score = 7;
+    eth.intraday!.mochi.trend.score = 7;
     expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT", "LONG_BTC"]);
-    h.s.trend!.shortOn = 1; eth.trend!.slicesAvailable = 8;
+    h.s.intraday!.mochi.trend.shortOn = 1; eth.intraday!.mochi.trend.slicesAvailable = 8;
     expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT"]);
   });
   it("offers one half-trim after deterioration and exits a lost trend without the model", () => {
     const h = riskFixture("mochi");
     h.b.position = position(h.s, { stopPx: 90, entryScore: 9 });
-    h.s.trend!.score = 6;
+    h.s.intraday!.mochi.trend.score = 6;
     expect(h.brain.menu(h.ctx).TRIM_HALF).toBeDefined();
     h.b.position.trendTrimmed = true;
     expect(h.brain.menu(h.ctx).TRIM_HALF).toBeUndefined();
-    h.s.trend!.score = 0;
+    h.s.intraday!.mochi.trend.score = 0;
     h.b.tradesToday = 100; h.b.feesTodayUsd = 100;
     expect(h.run(null, false)).toMatchObject({ action: { kind: "close", reason: "trend_lost" } });
     h.s.refreshedAt = NOW - 4 * h.cfg.dataRefreshMs;
@@ -71,37 +72,37 @@ describe("adapted Bizzy / Tiger rules", () => {
   it("requires an actual confirmed breakout, not just generic momentum", () => {
     const h = riskFixture();
     expect(h.brain.menu(h.ctx).LONG_BTC).toBeDefined();
-    h.s.confirmed15m!.close = 99.9;
+    h.s.intraday!.tiger.confirmed.close = 99.9;
     expect(h.brain.menu(h.ctx).LONG_BTC).toBeUndefined();
-    h.s.confirmed15m!.close = 100;
-    h.s.breakout = null;
+    h.s.intraday!.tiger.confirmed.close = 100;
+    h.s.intraday!.tiger.breakout = null;
     expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT"]);
   });
   it("rejects late, stretched, stale-day, crowded-funding and already-used setups", () => {
     const scenarios: Array<(h: ReturnType<typeof riskFixture>) => void> = [
       h => { h.s.mid = 100.51; },
-      h => { h.s.breakout!.dayStart! -= DAY; },
-      h => { h.s.confirmed15m!.ts = NOW - 60000; },
-      h => { h.s.confirmed15m!.ts = NOW - 32 * 60000; },
+      h => { h.s.intraday!.tiger.breakout!.range = 0; },
+      h => { h.s.intraday!.tiger.confirmed.ts = NOW - 60000; },
+      h => { h.s.intraday!.tiger.confirmed.ts = NOW - 32 * 60000; },
       h => { h.s.fundingPct = 0.04; },
       h => { h.s.fundingPct = null; },
-      h => { h.b.tradesToday = 1; },
-      h => { h.ctx.now = dayStart + DAY - 30 * 60000; h.s.refreshedAt = h.ctx.now; h.s.confirmed15m!.ts = h.ctx.now - 900000; },
+      h => { h.b.tradesToday = h.cfg.cats.tiger.maxTradesPerDay; },
+
     ];
     for (const mutate of scenarios) { const h = riskFixture(); mutate(h); expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT"]); }
   });
-  it("uses the day-open stop, never shorts, and exits at 23:59 despite entry caps/model failure", () => {
+  it("uses a 5m ATR stop, never shorts, and exits after two hours despite entry caps/model failure", () => {
     const h = riskFixture();
     expect(h.brain.stopFor(h.s.instId, "long", 100, h.ctx)).toBe(99);
     expect(h.brain.stopFor(h.s.instId, "short", 100, h.ctx)).toBeNull();
     h.b.position = position(h.s, { stopPx: 99, openedAt: NOW });
-    h.ctx.now = dayStart + DAY - 60000;
+    h.ctx.now = NOW + 120 * 60000;
     h.v.tickers.get(h.s.instId)!.ts = h.ctx.now;
     h.b.tradesToday = 100; h.b.feesTodayUsd = 100;
     expect(h.run(null, false)).toMatchObject({ action: { kind: "close", reason: "time_stop" } });
   });
   it("validates the editable strategy parameters", () => {
-    for (const env of [{ TIGER_BREAKOUT_K: "0" }, { MOCHI_VOL_TARGET_PCT: "NaN" }, { MOCHI_TRIM_SCORE_DROP: "1.5" }, { TIGER_MAX_CHASE_RANGE_FRAC: "-1" }])
+    for (const env of [{ TIGER_MAX_HOLD_MINUTES: "0" }, { MOCHI_VOL_TARGET_PCT: "NaN" }, { MOCHI_TRIM_SCORE_DROP: "1.5" }, { TIGER_MAX_CHASE_RANGE_FRAC: "-1" }])
       expect(() => loadConfig(env)).toThrow();
   });
 });

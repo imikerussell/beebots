@@ -1,53 +1,52 @@
-import { breezy, breezySizeFrac, strongerCoin } from "./bees/breezy.js";
-import { bizzy } from "./bees/bizzy.js";
 import { r2 } from "./bees/common.js";
 import type { BeeBrain, BeeContext, Menu } from "./bees/types.js";
 import type { BeeId, Config } from "./config.js";
 import { CONVICTION } from "./decision.js";
 import type { CoinStats } from "./market/types.js";
 
-const DAY = 86_400_000;
 const fresh = (s: CoinStats, ctx: BeeContext) => {
   const age = ctx.now - (s.refreshedAt ?? ctx.view.ts);
   return age >= 0 && age <= 3 * ctx.cfg.dataRefreshMs;
 };
+const entryMinutes = (id: BeeId) => id === "tiger" ? 5 : 15;
+const trendMinutes = (id: BeeId) => id === "tiger" ? 15 : 60;
+const sizeFraction = (id: BeeId, s: CoinStats | undefined, ctx: BeeContext) => {
+  if (id === "tiger") return 1;
+  const t = s?.intraday?.mochi.trend;
+  if (!t || !(t.score > 0) || !Number.isFinite(t.rv90Pct) || !(t.rv90Pct! > 0)) return 0;
+  return Math.min(1, t.score / 9, ctx.cfg.strategies.mochi.volTargetPct / t.rv90Pct! / (ctx.cfg.cats.mochi.maxNotionalPct / 100));
+};
 
-/** Active adaptations of the upstream brains. Only these two identities are scheduled. */
+/** Active intraday strategies; historical components remain available for replay research. */
 export function catBrain(id: BeeId, cfg: Config): BeeBrain {
   const limits = cfg.cats[id], profile = cfg.slots[id];
   const tiger = id === "tiger";
-  const candidates = (ctx: BeeContext) => [...ctx.view.stats.values()].filter((s) =>
-    profile.coins.includes(s.coin) && fresh(s, ctx) &&
-    s.vol24hUsd >= limits.minVolumeUsd && s.spreadBp <= limits.spreadGateBps &&
-    ctx.view.gated.includes(s.instId));
-  const mochiSize = (s: CoinStats | undefined, ctx: BeeContext) => {
-    if (!s?.trend || !(s.trend.score > 0) || !Number.isFinite(s.trend.rv90Pct) || !(s.trend.rv90Pct! > 0)) return 0;
-    return breezySizeFrac(s, ctx, { volTargetPct: cfg.strategies.mochi.volTargetPct, sizeFloorFrac: 0 });
-  };
   return {
     id: profile.style,
-    strategy: `${profile.name}: ${tiger
-      ? "Bizzy-derived daily volatility breakout: buy only a confirmed 15m close above today's UTC open + k times the complete previous day's range, with positive 1h momentum and a supportive 4h trend. Avoid extended moves and expensive funding. Initial stop is the day's open; code exits at 23:59 UTC."
-      : "Breezy-derived calculated trend: nine Donchian horizons on confirmed 4h closes, score = long minus short slices. Prefer the strongest BTC/ETH trend, tie-break at a 10-day high. Size by score and realised volatility, use a 2-ATR 4h initial stop and ratcheting channel midpoint. Hold winners; optionally trim once when score deteriorates; code exits when the trend is lost."} ${profile.rules} One long position maximum. Never add, average down or force entry. WAIT keeps cash; CLOSE reduces risk. Scores describe signal evidence, not profit probability.`,
+    strategy: `${profile.name}: ${strategyFacts(id, cfg).join(" ")} ${profile.rules} One long position maximum. Never add, average down or force entry. WAIT keeps cash; CLOSE reduces risk. Scores describe signal evidence, not profit probability.`,
     convictionLabels: CONVICTION,
     neverForce: true,
     forcedEntry: () => null,
-    sizeFrac: (intent, _conviction, ctx) => tiger ? 1 : mochiSize(ctx.view.stats.get(intent.instId), ctx),
+    sizeFrac: (intent, _conviction, ctx) => sizeFraction(id, ctx.view.stats.get(intent.instId), ctx),
     openGate: { minConviction: limits.minConviction, minProb: () => limits.minActionProbability },
-    universe: (ctx) => candidates(ctx).map((s) => s.instId),
-    snapshotCoins: (ctx) => [...new Set([...candidates(ctx).map((s) => s.instId), ...(ctx.bee.position ? [ctx.bee.position.instId] : [])])],
-    coinSnapshot: (s, ctx) => ({
-      mid: s.mid, spread_bps: r2(s.spreadBp), volume_usd: s.vol24hUsd,
-      momentum_1h_pct: r2(s.ret1hPct), confirmed_15m_close: s.confirmed15m?.close ?? null,
-      day_open: s.breakout?.dayOpen ?? null, previous_day_range: s.breakout?.prevRange ?? null,
-      breakout_trigger: s.breakout?.trigger ?? null,
-      minutes_to_day_exit: r2(((Math.floor(ctx.now / DAY) + 1) * DAY - 60000 - ctx.now) / 60000),
-      trend_score: s.trend?.score ?? null, trend_slices: s.trend?.slicesAvailable ?? null,
-      long_slices: s.trend?.longOn ?? null, short_slices: s.trend?.shortOn ?? null,
-      atr_4h_pct: s.trend?.atr4hPct ?? null, realised_vol_90x4h_pct: s.trend?.rv90Pct ?? null,
-      channel_trail_stop: s.trend?.trailStop ?? null, ten_day_extreme: s.trend?.tenDayExtreme ?? null,
-      target_notional_fraction: tiger ? 1 : mochiSize(s, ctx), funding_pct: r2(s.fundingPct, 4),
-    }),
+    universe: ctx => [...ctx.view.stats.values()].filter(s => entryBlockers(id, s, ctx).length === 0).map(s => s.instId),
+    snapshotCoins: ctx => [...ctx.view.stats.values()].filter(s => profile.coins.includes(s.coin) || ctx.bee.position?.instId === s.instId).map(s => s.instId),
+    coinSnapshot: (s, ctx) => {
+      const signal = s.intraday?.[id], t = signal?.trend;
+      return {
+        mid: s.mid, spread_bps: r2(s.spreadBp), volume_usd: s.vol24hUsd,
+        entry_bar_minutes: entryMinutes(id), trend_bar_minutes: trendMinutes(id),
+        confirmed_entry_close: signal?.confirmed.close ?? null,
+        momentum_pct: r2(signal?.momentumPct ?? null),
+        breakout_trigger: tiger ? signal?.breakout?.trigger ?? null : null,
+        trend_score: t?.score ?? null, trend_slices: t?.slicesAvailable ?? null,
+        long_slices: t?.longOn ?? null, short_slices: t?.shortOn ?? null,
+        entry_atr_pct: signal?.atrPct ?? null, trend_atr_pct: t?.atrPct ?? null,
+        realised_vol_90_bars_pct: t?.rv90Pct ?? null,
+        channel_trail_stop: t?.trailStop ?? null, recent_extreme: t?.recentExtreme ?? null,
+        target_notional_fraction: sizeFraction(id, s, ctx), funding_pct: r2(s.fundingPct, 4),
+      };
+    },
     menu(ctx) {
       const p = ctx.bee.position;
       if (p) {
@@ -55,61 +54,61 @@ export function catBrain(id: BeeId, cfg: Config): BeeBrain {
           HOLD: { desc: "Keep existing position; deterministic exits remain active", intent: { kind: "hold" } },
           CLOSE: { desc: "Reduce exposure to zero", intent: { kind: "close", reason: "model_exit" } },
         };
-        const s = ctx.view.stats.get(p.instId);
-        if (!tiger && !p.trendTrimmed && p.entryScore !== undefined && s && fresh(s, ctx) &&
-          s.trend && s.trend.score > 0 && s.trend.score <= p.entryScore - cfg.strategies.mochi.trimScoreDrop)
-          menu.TRIM_HALF = { desc: `Trend score fell from ${p.entryScore} to ${s.trend.score}; halve exposure once`, intent: { kind: "trim", fraction: 0.5 } };
+        const s = ctx.view.stats.get(p.instId), t = s?.intraday?.[id].trend;
+        if (!tiger && !p.trendTrimmed && p.entryScore !== undefined && s && fresh(s, ctx) && t &&
+          t.score > 0 && t.score <= p.entryScore - cfg.strategies.mochi.trimScoreDrop)
+          menu.TRIM_HALF = { desc: `Trend score fell from ${p.entryScore} to ${t.score}; halve exposure once`, intent: { kind: "trim", fraction: 0.5 } };
         return menu;
       }
       const menu: Menu = { WAIT: { desc: "Keep cash; no entry required", intent: { kind: "hold" } } };
-      const eligible = candidates(ctx).filter((s) => entryBlockers(id, s, ctx).length === 0);
-      // Preserve Breezy's stronger-coin selection instead of letting weak alternatives dilute the menu.
-      const best = tiger ? eligible : [strongerCoin(eligible)].filter((s): s is CoinStats => !!s);
+      const eligible = [...ctx.view.stats.values()].filter(s => entryBlockers(id, s, ctx).length === 0);
+      const best = tiger ? eligible : eligible.sort((a, b) => {
+        const ta = a.intraday!.mochi.trend, tb = b.intraday!.mochi.trend;
+        return tb.score - ta.score || tb.recentExtreme - ta.recentExtreme;
+      }).slice(0, 1);
       for (const s of best) menu[`LONG_${s.coin}`] = {
-        desc: tiger ? "Confirmed daily breakout within chase, trend and funding limits" : "Strongest eligible nine-channel trend, volatility-sized",
-        intent: { kind: "open", instId: s.instId, side: "long", sizeFrac: tiger ? 1 : mochiSize(s, ctx), setup: "strict" },
+        desc: tiger ? "Confirmed 5m breakout above the preceding hour, supportive 15m trend" : "Strongest eligible hourly trend with positive 15m momentum",
+        intent: { kind: "open", instId: s.instId, side: "long", sizeFrac: sizeFraction(id, s, ctx), setup: "strict" },
       };
       return menu;
     },
-    stopFor: tiger ? bizzy.stopFor : breezy.stopFor,
-    timeStopMinutes: tiger ? bizzy.timeStopMinutes : undefined,
-    trail: tiger ? undefined : (ctx) => {
-      const s = ctx.bee.position && ctx.view.stats.get(ctx.bee.position.instId);
-      return s && fresh(s, ctx) ? breezy.trail!(ctx) : null;
+    stopFor: (instId, side, entryPx, ctx) => {
+      const s = ctx.view.stats.get(instId), signal = s?.intraday?.[id];
+      const a = tiger ? signal?.atrPct : signal?.trend.atrPct;
+      return side === "long" && s && fresh(s, ctx) && Number.isFinite(a) && a! > 0
+        ? entryPx * (1 - limits.stopAtrMult * a! / 100) : null;
     },
-    protectiveExit: tiger ? undefined : (ctx) => {
+    timeStopMinutes: () => cfg.strategies[id].maxHoldMinutes,
+    trail: ctx => {
       const s = ctx.bee.position && ctx.view.stats.get(ctx.bee.position.instId);
-      return s && fresh(s, ctx) && s.trend?.slicesAvailable === 9 && s.trend.score <= 0 ? "trend_lost" : null;
+      const t = s && s.intraday?.[id].trend;
+      return s && fresh(s, ctx) && t && t.score > 0 ? t.trailStop : null;
+    },
+    protectiveExit: ctx => {
+      const s = ctx.bee.position && ctx.view.stats.get(ctx.bee.position.instId);
+      const t = s && s.intraday?.[id].trend;
+      return s && fresh(s, ctx) && t?.slicesAvailable === 9 && t.score <= 0 ? "trend_lost" : null;
     },
   };
 }
 
-/** User-visible facts from the same effective configuration that drives the strategy. */
 export function strategyFacts(id: BeeId, cfg: Config): string[] {
-  const l = cfg.cats[id];
-  const size = `At most ${l.maxNotionalPct}% of own equity in notional; ${l.stopRiskPct}% initial stop-distance risk including estimated fees. Sizes round down to exchange lots.`;
-  if (id === "tiger") {
-    const t = cfg.strategies.tiger;
-    return [
-      `Bizzy-derived, long-only daily breakout on BTC / ETH / SOL. Trigger: UTC day open + ${t.breakoutK} × yesterday's full range.`,
-      `Require a completed 15-minute close above the trigger, positive 1-hour momentum and a nine-channel 4-hour trend score of at least ${l.minTrendScore}.`,
-      `Skip entries more than ${t.maxChaseRangeFrac * 100}% of yesterday's range past the trigger, within ${t.minMinutesToClose} minutes of the 23:59 UTC exit, or above ${t.maxFundingPct}% funding per settlement.`,
-      size,
-      `Stop at the entry day's open; close at 23:59 UTC. Up to ${l.maxTradesPerDay} entries per UTC day, ${l.cooldownMinutes}-minute minimum entry cooldown. WAIT is valid.`,
-    ];
-  }
+  const l = cfg.cats[id], tiger = id === "tiger";
   return [
-    `Breezy-derived, long-only BTC / ETH trend following. Nine Donchian horizons: 5, 10, 20, 30, 60, 90, 150, 250 and 360 completed four-hour bars.`,
-    `Require score ≥ ${l.minTrendScore} and no short slices. Prefer the stronger coin; a 10-day closing high breaks ties.`,
-    `Target size uses score / 9 and a ${cfg.strategies.mochi.volTargetPct}% annualized volatility ceiling estimated from 90 four-hour returns. No minimum exposure.`,
-    size,
-    `Initial stop: ${l.stopAtrMult} × four-hour ATR. Ratchet along channel midpoints; close when trend score reaches zero or turns negative. Offer one half-trim after a ${cfg.strategies.mochi.trimScoreDrop}-point score drop. Never add. WAIT is valid.`,
+    tiger ? "Long-only BTC / ETH / SOL. A completed 5-minute close must break above the preceding twelve 5-minute highs (one hour), with positive 15-minute momentum."
+      : "Long-only BTC / ETH. Follow the strongest hourly trend with a completed 15-minute entry candle and positive 45-minute momentum.",
+    `Nine Donchian horizons (3, 5, 8, 12, 18, 24, 36, 48, 72) on completed ${trendMinutes(id)}-minute bars; require score ≥ ${l.minTrendScore}${tiger ? "." : " and no bearish channels."}`,
+    tiger ? `Avoid chasing beyond ${cfg.strategies.tiger.maxChaseRangeFrac * 100}% of the preceding hour's range; funding ≤ ${cfg.strategies.tiger.maxFundingPct}%.`
+      : `Size by score / 9 and a ${cfg.strategies.mochi.volTargetPct}% annualized volatility ceiling from 90 hourly returns; no minimum exposure.`,
+    `Initial stop: ${l.stopAtrMult} × ${tiger ? "5-minute" : "hourly"} ATR. The stop distance must be at least twice estimated round-trip fees, spread and slippage; this is a movement filter, not a profit forecast.`,
+    `At most ${l.maxNotionalPct}% of own equity in notional; ${l.stopRiskPct}% initial stop-distance risk including fees. Up to ${l.maxTradesPerDay} entries per UTC day with ${l.cooldownMinutes}-minute cooldown.`,
+    `Ratchet the channel stop; exit if trend score reaches zero or after ${cfg.strategies[id].maxHoldMinutes} minutes, even without the model. ${tiger ? "" : `Offer one half-trim after a ${cfg.strategies.mochi.trimScoreDrop}-point score decline. `}WAIT is valid.`,
   ];
 }
 
-/** Used by both the entry menu and the coach, so explanations match actual gates. */
+/** Used by entry menus and coach explanations; risk controls recheck before execution. */
 export function entryBlockers(id: BeeId, s: CoinStats, ctx: BeeContext): string[] {
-  const l = ctx.cfg.cats[id], t = s.trend, reasons: string[] = [];
+  const l = ctx.cfg.cats[id], signal = s.intraday?.[id], t = signal?.trend, reasons: string[] = [];
   if (!fresh(s, ctx)) reasons.push("stale_indicators");
   if (!ctx.cfg.slots[id].coins.includes(s.coin)) reasons.push("coin_not_allowed");
   if (!(s.vol24hUsd >= l.minVolumeUsd)) reasons.push("liquidity_gate");
@@ -117,34 +116,36 @@ export function entryBlockers(id: BeeId, s: CoinStats, ctx: BeeContext): string[
   if (!ctx.view.gated.includes(s.instId)) reasons.push("market_universe_gate");
   if (!t || t.slicesAvailable !== 9 || !Number.isFinite(t.score)) reasons.push("incomplete_trend_history");
   else if (t.score < l.minTrendScore) reasons.push("minTrendScore");
+  const age = signal ? ctx.now - signal.confirmed.ts : Infinity, period = entryMinutes(id) * 60000;
+  if (!signal || age < period || age > 2 * period + 60000) reasons.push("missing_confirmed_entry_close");
+  if (!signal || !Number.isFinite(signal.momentumPct) || !(signal.momentumPct! > 0)) reasons.push("momentum_not_positive");
+  const a = id === "tiger" ? signal?.atrPct : t?.atrPct;
+  const costsPct = 200 * ctx.cfg.risk.takerFeeRate + (s.spreadBp + 2 * ctx.cfg.paperSlippageBps) / 100;
+  if (!Number.isFinite(a) || !(a! > 0)) reasons.push("missing_atr_stop");
+  else if (a! * l.stopAtrMult < 2 * costsPct) reasons.push("move_too_small_after_costs");
+  if (ctx.bee.tradesToday >= l.maxTradesPerDay) reasons.push("trade_cap");
   if (id === "mochi") {
     if (t && t.shortOn !== 0) reasons.push("opposing_short_slices");
-    if (!t || !(t.score > 0) || !Number.isFinite(t.rv90Pct) || !(t.rv90Pct! > 0)) reasons.push("invalid_volatility_size");
-    if (!t || !Number.isFinite(t.atr4hPct) || !(t.atr4hPct! > 0)) reasons.push("missing_atr_stop");
+    if (!(sizeFraction(id, s, ctx) > 0)) reasons.push("invalid_volatility_size");
   } else {
-    const b = s.breakout, c = s.confirmed15m, rules = ctx.cfg.strategies.tiger;
-    const dayStart = Math.floor(ctx.now / DAY) * DAY;
-    if (ctx.bee.tradesToday >= l.maxTradesPerDay) reasons.push("trade_cap");
-    if ((dayStart + DAY - 60000 - ctx.now) / 60000 < rules.minMinutesToClose) reasons.push("too_close_to_day_exit");
-    if (!b || b.dayStart !== dayStart || ![b.trigger, b.dayOpen, b.prevRange].every(Number.isFinite) || !(b.prevRange > 0) || !(b.dayOpen > 0)) reasons.push("missing_daily_range");
+    const b = signal?.breakout, rules = ctx.cfg.strategies.tiger;
+    if (!b || ![b.trigger, b.range].every(Number.isFinite) || b.trigger <= 0 || b.range <= 0) reasons.push("missing_intraday_range");
     else {
-      if (!c || c.ts < dayStart || ctx.now - c.ts < 15 * 60000 || ctx.now - c.ts > 31 * 60000) reasons.push("missing_confirmed_15m_close");
-      if (!c || !(c.close >= b.trigger) || !(s.mid >= b.trigger)) reasons.push("breakout_not_confirmed");
-      if (!(s.mid <= b.trigger + rules.maxChaseRangeFrac * b.prevRange)) reasons.push("price_extended");
+      if (!(signal!.confirmed.close > b.trigger) || !(s.mid >= b.trigger)) reasons.push("breakout_not_confirmed");
+      if (!(s.mid <= b.trigger + rules.maxChaseRangeFrac * b.range)) reasons.push("price_extended");
     }
-    if (!((s.ret1hPct ?? 0) > 0)) reasons.push("momentum_not_positive");
     if (!Number.isFinite(s.fundingPct) || !(s.fundingPct! <= rules.maxFundingPct)) reasons.push("funding_gate");
   }
   return reasons;
 }
 
 export function entryDiagnostics(id: BeeId, ctx: BeeContext) {
-  return ctx.cfg.slots[id].coins.map((coin) => {
-    const s = [...ctx.view.stats.values()].find((s) => s.coin === coin);
+  return ctx.cfg.slots[id].coins.map(coin => {
+    const s = [...ctx.view.stats.values()].find(s => s.coin === coin), signal = s?.intraday?.[id];
     return { coin, blockers: s ? entryBlockers(id, s, ctx) : ["missing_market_data"],
-      trendScore: s?.trend?.score ?? null, spreadBps: s?.spreadBp ?? null,
-      volumeUsd: s?.vol24hUsd ?? null, mid: s?.mid ?? null,
-      breakoutTrigger: s?.breakout?.trigger ?? null,
-      confirmedClose: s?.confirmed15m?.close ?? null };
+      trendMinutes: trendMinutes(id), entryMinutes: entryMinutes(id), trendScore: signal?.trend.score ?? null,
+      spreadBps: s?.spreadBp ?? null, volumeUsd: s?.vol24hUsd ?? null, mid: s?.mid ?? null,
+      breakoutTrigger: id === "tiger" ? signal?.breakout?.trigger ?? null : null,
+      confirmedClose: signal?.confirmed.close ?? null };
   });
 }
