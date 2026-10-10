@@ -14,7 +14,6 @@ describe("entry diagnostics", () => {
     h.s.intraday!.tiger.atrPct = 0.01;
     h.v.dataErrors = new Map([[h.s.instId, { at: NOW - 1000, message: "5m candle request timed out" }]]);
     expect(entryBlockers("tiger", h.s, h.ctx)).toEqual(["stale_indicators"]);
-    expect(h.run().vetoedBy).toBe("stale_indicators");
     const d = entryDiagnostics("tiger", h.ctx)[0]!;
     expect(d).toMatchObject({ indicatorsAgeMs: 600000, maxIndicatorsAgeMs: 180000, feedError: "5m candle request timed out" });
     const explanations = entryExplanations(d);

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { Alerts } from "./alerts.js";
 import { BEES, loadConfig } from "./config.js";
 import { Db } from "./db.js";
-import { Engine } from "./engine.js";
+import { CatfolioEngine as Engine } from "./catfolio-engine.js";
 import { EventBus } from "./events.js";
 import { OkxExecutor, SimExecutor } from "./exec/executor.js";
 import { createDecisionProvider, decisionConfiguration } from "./providers.js";

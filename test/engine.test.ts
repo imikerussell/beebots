@@ -9,7 +9,7 @@ import type {
   DecisionResult,
 } from "../src/decision.js";
 import { Db } from "../src/db.js";
-import { Engine } from "../src/engine.js";
+import { CatfolioEngine as Engine } from "../src/catfolio-engine.js";
 import { EventBus } from "../src/events.js";
 import type { Alerts } from "../src/alerts.js";
 import type { MarketFeed } from "../src/market/data.js";
@@ -130,6 +130,40 @@ async function harness(
   };
 }
 describe("Catfolio engine, protection and recovery", () => {
+  it("uses each cat's allocation for source loss limits and reported returns", async () => {
+    const cfg = loadConfig({ TIGER_ALLOCATION_PCT: "75", MOCHI_ALLOCATION_PCT: "25" });
+    const h = await harness(undefined, { cfg });
+    expect(h.engine.snapshot().cats.map(c => [c.allocatedUsd, c.pnlUsd])).toEqual([[150, 0], [50, 0]]);
+    h.engine.bees.tiger.cashUsd = 135;
+    await h.engine.tick();
+    expect(h.engine.bees.tiger.cap).toBe("loss_stop");
+    expect(h.engine.bees.mochi.cap).toBeNull();
+    expect(h.engine.snapshot().cats[0]!.pnlUsd).toBe(-15);
+  });
+  it("shows upstream benched pulses without calling the provider or replaying an old decision", async () => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask));
+    const h = await harness(decide);
+    for (const id of BEES) {
+      h.engine.bees[id].cap = "trade_cap";
+      h.engine.bees[id].tradesToday = h.cfg.cats[id].maxTradesPerDay;
+    }
+    await h.engine.tick();
+    expect(decide).not.toHaveBeenCalled();
+    const events = h.db.recentEvents(10, "decision").map(line => JSON.parse(line));
+    expect(events).toHaveLength(2);
+    for (const event of events) expect(event).toMatchObject({ choice: "BENCHED", pulse: true, source: "rules", decisionId: null, action: { kind: "none" }, latencyMs: null });
+    for (const cat of h.engine.snapshot().cats) expect(cat.last?.status).toBeTruthy();
+  });
+  it("schedules the first source tick at ten seconds", async () => {
+    vi.useFakeTimers();
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask));
+    const h = await harness(decide);
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(decide).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(decide).toHaveBeenCalled();
+    await h.close();
+  });
   it("funds exactly two isolated accounts, and WAIT never trades", async () => {
     const h = await harness();
     await h.engine.tick();
@@ -144,7 +178,7 @@ describe("Catfolio engine, protection and recovery", () => {
       action: { kind: "none" }, entryDiagnostics: expect.any(Array),
     });
     h.engine.bees.tiger.cashUsd = 5;
-    await h.engine.protectiveTick();
+    await h.engine.tick();
     expect(h.engine.bees.mochi.cashUsd).toBe(100);
     expect(h.engine.bees.tiger.cashUsd).toBe(5);
   });
@@ -161,10 +195,9 @@ describe("Catfolio engine, protection and recovery", () => {
       .get("tiger") as { audit: string };
     const audit = JSON.parse(row.audit);
     expect(audit).toMatchObject({
-      strategyVersion: "catfolio-4-upstream-restored",
+      strategyVersion: "catfolio-5-source-engine",
       rubricVersion: "upstream-style-conviction-1",
       config: { model: "", slippageBps: 2 },
-      response: { model: "mock-nimble" },
     });
     expect(audit.market.tickers).toHaveLength(1);
     expect(audit.config).not.toHaveProperty("token");
@@ -193,9 +226,10 @@ describe("Catfolio engine, protection and recovery", () => {
       { provider: "jev", requestedModel: "jev-1.13.0" },
     ]);
     for (const c of report.cats) {
-      expect(c.estimatedInferenceCostUsd).toBe(0.001);
+      const recordedCost = c.cat === "tiger" ? 0.001 : 0; // Invalid choices have no successful source result.
+      expect(c.estimatedInferenceCostUsd).toBe(recordedCost);
       expect(c.netPnlUsd).toBe(0);
-      expect(c.netPnlAfterEstimatedInferenceUsd).toBe(-0.001);
+      expect(c.netPnlAfterEstimatedInferenceUsd).toBe(0 - recordedCost);
     }
     const audit = JSON.stringify(
       h.db.raw.prepare("SELECT audit_json FROM decisions").all(),
@@ -203,101 +237,16 @@ describe("Catfolio engine, protection and recovery", () => {
     expect(audit).not.toContain("never-record-this-key");
     expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
   });
-  it("continues protective exits during slow inference and discards the changed-position response", async () => {
-    const pending: Array<() => void> = [];
-    const h = await harness(
-      (ask) =>
-        new Promise((resolve) =>
-          pending.push(() => resolve(answer(ask, "HOLD"))),
-        ),
-    );
-    h.engine.bees.tiger.position = position(h.s, { stopPx: 99, contracts: 10 });
-    h.engine.bees.mochi.position = position(h.s, { stopPx: 99, contracts: 10 });
-    const request = h.engine.tick();
-    expect(pending).toHaveLength(2);
-    h.s.mid = 98;
-    h.v.tickers.get(h.s.instId)!.mid = 98;
-    h.v.tickers.get(h.s.instId)!.bid = 97.99;
-    h.v.tickers.get(h.s.instId)!.ask = 98.01;
-    h.advance(5000);
-    await h.engine.protectiveTick();
-    expect(h.engine.bees.tiger.position).toBeNull();
-    expect(h.engine.bees.mochi.position).toBeNull();
-    pending.forEach((resolve) => resolve());
-    await request;
-    expect(
-      h.db.raw
-        .prepare(
-          "SELECT * FROM decisions WHERE vetoed_by='stale_model_response'",
-        )
-        .all(),
-    ).toHaveLength(2);
-    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(2);
-  });
-  it("does not overlap decisions per cat, and expires returned entries", async () => {
-    const pending: Array<() => void> = [];
-    const h = await harness(
-      (ask) =>
-        new Promise((resolve) =>
-          pending.push(() => resolve(answer(ask, "LONG_BTC"))),
-        ),
-    );
-    const first = h.engine.tick();
-    await h.engine.tick();
-    expect(pending).toHaveLength(2);
-    h.advance(h.cfg.maxDecisionAgeMs + 1);
-    pending.forEach((r) => r());
-    await first;
-    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
-    expect(
-      h.db.raw
-        .prepare(
-          "SELECT * FROM decisions WHERE vetoed_by='stale_model_response'",
-        )
-        .all(),
-    ).toHaveLength(2);
-  });
-  it("uses the independent five-second timer while the sixty-second model task waits", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    const pending: Array<() => void> = [];
-    const h = await harness(
-      (ask) =>
-        new Promise((resolve) =>
-          pending.push(() => resolve(answer(ask, "HOLD"))),
-        ),
-      { clock: Date.now },
-    );
-    h.engine.bees.tiger.position = position(h.s, { stopPx: 90, contracts: 10 });
-    await vi.advanceTimersByTimeAsync(60000);
-    expect(pending.length).toBe(2);
-    h.v.tickers.get(h.s.instId)!.mid = 89;
-    h.v.tickers.get(h.s.instId)!.bid = 88.99;
-    h.v.tickers.get(h.s.instId)!.ask = 89.01;
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(h.engine.bees.tiger.position).toBeNull();
-    pending.forEach((r) => r());
-    await vi.advanceTimersByTimeAsync(0);
-    await h.close();
-  });
-  it("rechecks liquidity, spread, setup and fresh market data after inference", async () => {
-    const pending: Array<() => void> = [];
-    const h = await harness(
-      (ask) =>
-        new Promise((resolve) =>
-          pending.push(() => resolve(answer(ask, "LONG_BTC"))),
-        ),
-    );
-    const task = h.engine.tick();
-    h.v.tickers.get(h.s.instId)!.spreadBp = 100;
-    pending.forEach((r) => r());
-    await task;
-    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
-    expect(
-      h.db.raw
-        .prepare("SELECT * FROM decisions WHERE vetoed_by='spread_gate'")
-        .all(),
-    ).toHaveLength(2);
+  it("uses the upstream serialized tick while inference is pending", async () => {
+    const releases: Array<()=>void> = [];
+    const h=await harness(ask=>new Promise(resolve=>releases.push(()=>resolve(answer(ask,"HOLD")))));
+    h.engine.bees.mochi.position=position(h.s,{stopPx:90,contracts:10});
+    const task=h.engine.tick(); await Promise.resolve(); await Promise.resolve();
+    const count=releases.length;
+    await h.engine.tick(); expect(releases.length).toBe(count);
+    // There is no second protection loop that can mutate a position during this source tick.
+    expect(h.engine.bees.mochi.position!.contracts).toBe(10);
+    releases.forEach(release=>release()); await task;
   });
   it("persists model failures and can exit despite entry caps", async () => {
     const h = await harness(async () => ({
@@ -317,7 +266,7 @@ describe("Catfolio engine, protection and recovery", () => {
       expect.objectContaining({ error: "timeout", probabilities: null, confidence: null, source: "model", latencyMs: 45000 }),
     ]);
     h.engine.bees.tiger.position = position(h.s, { stopPx: 101 });
-    await h.engine.protectiveTick();
+    await h.engine.tick();
     expect(h.engine.bees.tiger.position).toBeNull();
     expect(morningReport(h.db).cats[0]!.modelFailures).toBe(1);
   });
@@ -345,7 +294,7 @@ describe("Catfolio engine, protection and recovery", () => {
     await h.engine.tick();
     expect(sends).toBe(2);
     h.engine.bees.tiger.position = position(h.s, { stopPx: 101 });
-    await h.engine.protectiveTick();
+    await h.engine.tick();
     expect(h.engine.bees.tiger.position).toBeNull();
   });
   it("restarts from committed books without top-ups or duplicate entries", async () => {
@@ -387,17 +336,18 @@ describe("Catfolio engine, protection and recovery", () => {
     expect(first.engine.bees.mochi.position!.entryScore).toBe(9);
     first.s.trend!.score = 6;
     await first.engine.tick();
-    expect(first.engine.bees.mochi.position).toMatchObject({ entryScore: 9, trendTrimmed: true });
+    expect(first.engine.bees.mochi.position).toMatchObject({ entryScore: 9 });
     const remaining = first.engine.bees.mochi.position!.contracts;
     expect(remaining).toBeLessThan(original);
     await first.close();
     const second = await harness(choose, { db: new Db(path) });
+    second.advance(10_000); // A restart happens later than the preceding source order timestamp.
     second.s.trend!.score = 6;
     await second.engine.tick();
     expect(second.engine.bees.mochi.position!.contracts).toBeLessThan(remaining);
     expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trim'").all()).toHaveLength(2);
     second.engine.bees.mochi.position!.stopPx = 101;
-    await second.engine.protectiveTick();
+    await second.engine.tick();
     expect(second.engine.bees.mochi.position).toBeNull();
     expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='stop'").all()).toHaveLength(1);
     await second.close();
@@ -414,7 +364,7 @@ describe("Catfolio engine, protection and recovery", () => {
     await first.engine.tick();
     closing = true;
     first.advance(5000);
-    await first.engine.protectiveTick();
+    await first.engine.tick();
     for (const id of BEES) {
       expect(first.engine.bees[id].position).toBeNull();
       expect(first.db.loadBee(id)!.position).toBeNull();
@@ -467,8 +417,8 @@ describe("Catfolio engine, protection and recovery", () => {
     first.s.fundingPct = 0.01;
     const slotMs = 8 * 3600000;
     first.advance((Math.floor(NOW / slotMs) + 1) * slotMs - NOW);
-    await first.engine.protectiveTick();
-    await first.engine.protectiveTick();
+    await first.engine.tick();
+    await first.engine.tick();
     expect(first.db.raw.prepare("SELECT * FROM funding").all()).toHaveLength(2);
     const paid = first.engine.bees.tiger.totals.fundingUsd;
     expect(paid).toBeLessThan(0);
@@ -589,10 +539,11 @@ describe("coach approval in the running engine", () => {
     await h.engine.tick(); seedHistory(h.db); await h.engine.coach.tick();
     slow = true;
     const pending = h.engine.tick();
+    await Promise.resolve(); await Promise.resolve();
     expect(releases).toHaveLength(2);
     h.engine.coach.resolve(h.engine.coach.state().entries[0]!.id, "accept");
     releases.forEach((release) => release()); await pending;
-    expect(h.db.raw.prepare("SELECT COUNT(*) AS n FROM decisions WHERE bee='tiger' AND vetoed_by='stale_model_response'").get()).toMatchObject({ n: 1 });
+    expect(h.db.raw.prepare("SELECT COUNT(*) AS n FROM decisions WHERE bee='tiger' AND jev_error='rules_changed_during_request'").get()).toMatchObject({ n: 1 });
     expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
   });
 });
@@ -613,8 +564,6 @@ describe("restored source actions reach the executor", () => {
     h.s.mid=95;
     Object.assign(h.v.tickers.get(h.s.instId)!,{mid:95,bid:94.995,ask:95.005});
     choice="ADD_TO_WINNER";
-    await h.engine.protectiveTick(); // marks the winner; no autonomous add from this loop
-    expect(h.engine.bees.mochi.position!.contracts).toBe(before.contracts);
     await h.engine.tick();
     const after=h.engine.bees.mochi.position!;
     expect(after.contracts).toBeGreaterThan(before.contracts);

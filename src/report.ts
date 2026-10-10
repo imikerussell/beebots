@@ -1,6 +1,6 @@
 import { BEES } from "./config.js";
 import type { Db } from "./db.js";
-import type { Engine } from "./engine.js";
+import type { CatfolioEngine as Engine } from "./catfolio-engine.js";
 const percentile = (values: number[], p: number): number | null =>
   values.length ? values[Math.max(0, Math.ceil(values.length * p) - 1)]! : null;
 export function morningReport(

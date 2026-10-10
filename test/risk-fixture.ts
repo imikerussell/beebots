@@ -34,7 +34,7 @@ export function riskFixture(id: BeeId = "tiger") {
       ctx,
       brain,
       proposal: p,
-      modelStatus: available ? (p ? "ok" : "no_options") : "unreachable",
+      jev: available ? (p ? "ok" : "no_options") : "unreachable",
       sizeMult: 1,
       dataAgeMs: 0,
       maxDataAgeMs: 180000,

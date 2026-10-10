@@ -319,7 +319,7 @@ export function loadConfig(
       engineVersion: str("LM_STUDIO_ENGINE", "unrecorded"),
       artifact: str("LM_STUDIO_ARTIFACT", "unrecorded"),
     },
-    tickMs: num("DECISION_INTERVAL_MS", 60000, 1000),
+    tickMs: num("DECISION_INTERVAL_MS", 10000, 1000),
     protectiveMs: num("PROTECTIVE_INTERVAL_MS", 5000, 100),
     maxDecisionAgeMs: num("MAX_DECISION_AGE_MS", 55000, 100),
     maxTickerAgeMs: num("MAX_TICKER_AGE_MS", 15000, 100),

@@ -2,7 +2,6 @@
 // Pure: no I/O, no clock, no randomness. Every veto, shrink and force says why.
 
 import { maxNotionalUsd, minutesSince, positionNotional } from "./bees/common.js";
-import { contractsFor } from "./exec/sizing.js";
 import type { Action, BeeBrain, BeeContext, CapReason, Intent } from "./bees/types.js";
 
 export type { Action } from "./bees/types.js";
@@ -17,16 +16,14 @@ export interface Proposal {
 }
 
 /** "no_options": the menu was empty, so Jev was not asked (forcing rules still apply). */
-export type ModelStatus = "ok" | "unreachable" | "daily_cap" | "no_options";
+export type JevStatus = "ok" | "unreachable" | "daily_cap" | "no_options";
 
 export interface RiskInput {
   ctx: BeeContext;
   brain: BeeBrain;
   /** null when Jev was not asked or did not answer. */
   proposal: Proposal | null;
-  modelStatus: ModelStatus;
-  /** The independent stop loop must never initiate or enlarge exposure. */
-  protectiveOnly?: boolean;
+  jev: JevStatus;
   /** 1, or LIVE_SIZE_MULTIPLIER during the live ramp. */
   sizeMult: number;
   /** Age of the last full market refresh. */
@@ -61,9 +58,9 @@ export function evaluateCaps(ctx: BeeContext): { cap: CapReason | null; tripped:
     return tripped;
   };
   if (cap === "retired") return { cap, tripped: null };
-  if (bee.equityUsd <= cfg.cats[bee.id].startEquityUsd * (cfg.risk.retireAtPct / 100)) return { cap: "retired", tripped: set("retired") };
+  if (bee.equityUsd <= cfg.risk.startEquityUsd * (cfg.risk.retireAtPct / 100)) return { cap: "retired", tripped: set("retired") };
   if (cap === "loss_stop") return { cap, tripped: null };
-  if (bee.equityUsd <= bee.dayStartEquityUsd * (1 - cfg.cats[bee.id].dailyLossStopPct / 100)) return { cap: "loss_stop", tripped: set("loss_stop") };
+  if (bee.equityUsd <= bee.dayStartEquityUsd * (1 - cfg.risk.dailyLossStopPct / 100)) return { cap: "loss_stop", tripped: set("loss_stop") };
   if (cap) return { cap, tripped: null };
   if (bee.tradesToday >= knobs.maxTradesPerDay) return { cap: "trade_cap", tripped: set("trade_cap") };
   if (bee.feesTodayUsd >= knobs.feeBudgetUsdDay) return { cap: "fee_budget", tripped: set("fee_budget") };
@@ -92,39 +89,39 @@ interface OpenCheck {
   notionalUsd?: number;
 }
 
-/** Source sizing plus quote validity and exchange lot checks retained from Catfolio. */
+/** Spread gate, funding veto, min size and the size cap for an open/switch/add. */
 function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCheck {
-  const {ctx, brain, sizeMult} = input;
-  const {bee, view, knobs} = ctx;
+  const { ctx, brain, sizeMult } = input;
+  const { bee, view, knobs } = ctx;
   const max = maxNotionalUsd(ctx) * sizeMult;
-  if (!(max > 0) || !Number.isFinite(max) || !(sizeMult > 0 && sizeMult <= 1)) return {ok:false, why:"invalid_strategy_size"};
-  const p = bee.position;
-  const id = intent.kind === "add" ? p?.instId : intent.kind === "open" || intent.kind === "switch" ? intent.instId : undefined;
-  if (!id) return {ok:false, why:"invalid_while_flat"};
-  if (!freshTicker(ctx, id)) return {ok:false, why:"stale_market_data"};
-  const s = view.stats.get(id), inst = view.instruments.get(id), t = view.tickers.get(id)!;
-  if (!s || !inst || inst.state !== "live" || inst.kind !== "crypto" || !ctx.cfg.slots[bee.id].coins.includes(inst.coin)) return {ok:false, why:"instrument_not_allowed"};
-  const age = ctx.now - (s.refreshedAt ?? view.ts);
-  if (age < 0 || age > input.maxDataAgeMs) return {ok:false, why:"stale_indicators"};
-  if (!Number.isFinite(t.spreadBp) || t.spreadBp > knobs.spreadGateBps) return {ok:false, why:"spread_gate"};
-  const side = intent.kind === "add" ? p!.side : intent.kind === "open" || intent.kind === "switch" ? intent.side : "long";
-  if (side === "long" && brain.fundingVetoLongZ !== undefined && s.fundingZ !== null && s.fundingZ > brain.fundingVetoLongZ) return {ok:false, why:"funding_veto"};
-  const px = side === "long" ? t.ask * (1 + ctx.cfg.paperSlippageBps / 10000) : t.bid * (1 - ctx.cfg.paperSlippageBps / 10000);
-  if (intent.kind === "open" || intent.kind === "switch") {
-    const stop = brain.stopFor(id, side, px, ctx);
-    if (stop === null || !Number.isFinite(stop) || stop <= 0 || (side === "long" ? stop >= px : stop <= px)) return {ok:false, why:"invalid_initial_stop"};
-  }
-  const frac = intent.kind === "add" ? intent.sizeFrac : brain.sizeFrac(intent as Extract<Intent,{kind:"open"|"switch"}>, conviction, ctx);
-  if (!Number.isFinite(frac) || frac <= 0) return {ok:false, why:"invalid_strategy_size"};
-  const room = intent.kind === "add" ? Math.max(0, max - positionNotional(p!, t.mid, inst.ctVal)) : max;
-  const n = Math.min(Math.min(1, frac) * max, room);
-  const contracts = contractsFor(n, inst, px);
-  return contracts > 0 ? {ok:true, notionalUsd: contracts * inst.ctVal * px} : {ok:false, why:"below_exchange_minimum"};
-}
+  if (!(max > 0)) return { ok: false, why: "no_equity" };
 
-export function freshTicker(ctx: BeeContext, instId: string): boolean {
-  const t = ctx.view.tickers.get(instId);
-  return !!t && [t.mid,t.bid,t.ask,t.ts].every(Number.isFinite) && t.bid > 0 && t.ask >= t.bid && t.mid > 0 && ctx.now - t.ts >= -1000 && ctx.now - t.ts <= ctx.cfg.maxTickerAgeMs;
+  if (intent.kind === "add") {
+    const p = bee.position!;
+    const s = view.stats.get(p.instId);
+    const inst = view.instruments.get(p.instId);
+    if (!s || !inst) return { ok: false, why: "no_market_data" };
+    if (s.spreadBp > knobs.spreadGateBps) return { ok: false, why: `spread_gate ${p.coin} ${s.spreadBp.toFixed(1)}bp` };
+    const room = max - positionNotional(p, s.mid, inst.ctVal);
+    const n = Math.min(intent.sizeFrac * maxNotionalUsd(ctx) * sizeMult, room);
+    const minUsd = inst.minSz * inst.ctVal * s.mid;
+    if (n < minUsd) return { ok: false, why: "size_cap" };
+    return { ok: true, notionalUsd: n };
+  }
+  if (intent.kind !== "open" && intent.kind !== "switch") return { ok: false, why: "not_opening" };
+
+  const s = view.stats.get(intent.instId);
+  const inst = view.instruments.get(intent.instId);
+  if (!s || !inst) return { ok: false, why: "no_market_data" };
+  if (s.spreadBp > knobs.spreadGateBps) return { ok: false, why: `spread_gate ${s.coin} ${s.spreadBp.toFixed(1)}bp` };
+  if (intent.side === "long" && brain.fundingVetoLongZ !== undefined && s.fundingZ !== null && s.fundingZ > brain.fundingVetoLongZ) {
+    return { ok: false, why: `funding_veto ${s.coin} z=${s.fundingZ.toFixed(1)}` };
+  }
+  const frac = Math.max(0, Math.min(1, brain.sizeFrac(intent, conviction, ctx)));
+  const n = Math.min(frac * max, max);
+  const minUsd = inst.minSz * inst.ctVal * s.mid;
+  if (n < minUsd) return { ok: false, why: `below_min_size ${s.coin} $${n.toFixed(2)} < $${minUsd.toFixed(2)}` };
+  return { ok: true, notionalUsd: n };
 }
 
 function toAction(intent: Intent, notionalUsd?: number): Action {
@@ -145,8 +142,8 @@ function toAction(intent: Intent, notionalUsd?: number): Action {
 }
 
 export function applyRisk(input: RiskInput): RiskResult {
-  const { ctx, brain, proposal, modelStatus: jev } = input;
-  const { bee, knobs, now } = ctx;
+  const { ctx, brain, proposal, jev } = input;
+  const { bee, view, knobs, now } = ctx;
   const p = bee.position;
   const { cap, tripped } = evaluateCaps(ctx);
   const out = (action: Action, extra: Partial<RiskResult> & { status: string }): RiskResult => ({
@@ -158,8 +155,6 @@ export function applyRisk(input: RiskInput): RiskResult {
     ...extra,
   });
 
-  if (p && !freshTicker(ctx, p.instId)) return out(NONE, { vetoedBy: "stale_exit_market_data", status: "stale_exit_market_data" });
-
   // 1. Retired / daily loss stop: go flat and stay flat. Forcing is suspended.
   if (cap === "retired" || cap === "loss_stop") {
     const status = capStatus(cap, ctx);
@@ -169,10 +164,9 @@ export function applyRisk(input: RiskInput): RiskResult {
 
   // 2. Code stops fire whatever Jev says, and even when Jev is down.
   if (p) {
-    const t = ctx.view.tickers.get(p.instId)!;
-    if (p.stopPx === null || !Number.isFinite(p.stopPx)) return out({kind:"close",reason:"missing_stop"}, {forcedBy:"missing_stop",status:"missing_stop"});
-    if (p.stopPx !== null) {
-      const hit = p.side === "long" ? t.mid <= p.stopPx : t.mid >= p.stopPx;
+    const s = view.stats.get(p.instId);
+    if (s && p.stopPx !== null) {
+      const hit = p.side === "long" ? s.mid <= p.stopPx : s.mid >= p.stopPx;
       if (hit) return out({ kind: "close", reason: "stop" }, { forcedBy: "stop", vetoedBy: proposal ? "stop" : null, status: `stopped out of ${p.coin}` });
     }
     const ts = brain.timeStopMinutes?.(ctx);
@@ -180,8 +174,6 @@ export function applyRisk(input: RiskInput): RiskResult {
       return out({ kind: "close", reason: "time_stop" }, { forcedBy: "time_stop", vetoedBy: proposal ? "time_stop" : null, status: `time stop on ${p.coin}` });
     }
   }
-
-  if (input.protectiveOnly) return out(NONE, {status:"protective check: no stop triggered"});
 
   // 3. Jev fail-closed: hold whatever we have, open nothing.
   if (jev === "daily_cap") return out(NONE, { vetoedBy: "jev_daily_cap", status: "Jev daily cap hit: all bees hold" });
@@ -200,16 +192,11 @@ export function applyRisk(input: RiskInput): RiskResult {
   if (p && intent.kind === "open") veto("invalid_while_positioned");
   if (p && intent.kind === "switch" && intent.instId === p.instId && intent.side === p.side) veto("switch_to_same");
 
-  if (intent.kind === "trim" && (!Number.isFinite(intent.fraction) || intent.fraction <= 0 || intent.fraction > 1)) veto("invalid_trim");
-
   // 5. Opening gates.
   if (proposal && isOpening(intent)) {
     const dataStale = input.dataAgeMs > input.maxDataAgeMs;
     const cooldownLeft = bee.lastOrderAt === null ? 0 : knobs.cooldownMinutes - minutesSince(bee.lastOrderAt, now);
-    const stillOffered = Object.values(brain.menu(ctx)).some(o => JSON.stringify(o.intent) === JSON.stringify(intent));
-    if (!stillOffered) veto("setup_no_longer_valid");
-    else if (!Number.isFinite(proposal.prob) || proposal.prob < 0 || proposal.prob > 1 || !Number.isFinite(proposal.conviction) || proposal.conviction < 0 || proposal.conviction > 3) veto("invalid_conviction");
-    else if (cap === "trade_cap" || cap === "fee_budget") veto(cap);
+    if (cap === "trade_cap" || cap === "fee_budget") veto(cap);
     else if (dataStale) veto("stale_market_data");
     else if (brain.openGate && intent.kind !== "add" && (proposal.prob < brain.openGate.minProb(ctx) || proposal.conviction < brain.openGate.minConviction)) {
       veto(`weak_conviction p=${proposal.prob.toFixed(2)} c=${proposal.conviction}`);

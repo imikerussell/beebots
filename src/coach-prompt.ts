@@ -44,6 +44,6 @@ export function trainerPlaybook(cfg: Config) {
       stop_dist_atr: "distance to channel stop in ATR units", rv90_pct: "annualized volatility from 90 trend-bar returns, percent",
       at_10d: "1 at a ten-day closing high, -1 at a low, otherwise 0", r24h_pct: "24-hour return, percent", fund_z: "funding rate's 30-day z-score",
     },
-    accountFields: "me.pos is flat or the held coin/side. When flat: flat_min, trades (today/cap), fee_left. When invested: usd (position notional), upl_r (unrealized P&L / initial risk), at_stop_usd (P&L if the stop hits), held_min, entry_trend_score, trend_trimmed (yes/no), trades, fee_left.",
+    accountFields: "me.pos is flat or the held coin/side. When flat: flat_min, trades (today/cap), fee_left. When invested: usd (position notional), upl_r (unrealized P&L / initial risk), at_stop_usd (P&L if the stop hits), held_min, trades, fee_left.",
   }));
 }

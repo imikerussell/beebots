@@ -12,7 +12,7 @@ describe("Catfolio configuration", () => {
     expect(c.creds).toEqual({});
     expect(c.local.origin).toBe("http://127.0.0.1:1234");
     expect(c.local.model).toBe("");
-    expect(c.tickMs).toBe(60000);
+    expect(c.tickMs).toBe(10000);
     expect(c.protectiveMs).toBe(5000);
   });
   it("validates configurable allocations and numerical bounds", () => {

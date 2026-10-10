@@ -34,16 +34,8 @@ describe("pinned upstream trading behavior (6d3fe0d)",()=>{
       if(scenario==="retired")h.b.equityUsd=30;
       const modelStatus=scenario==="outage"?"unreachable":proposal?"ok":"no_options";
       const input={ctx:h.ctx,brain:h.brain,proposal,sizeMult:1,dataAgeMs:scenario==="stale"?999999:0,maxDataAgeMs:180000};
-      const source=sourceRisk({...input,jev:modelStatus}),actual=applyRisk({...input,modelStatus});
-      expect(actual.action.kind,scenario).toBe(source.action.kind);
-      expect(actual.forcedBy,scenario).toBe(source.forcedBy);
-      expect(actual.cap,scenario).toBe(source.cap);
-      if("side" in actual.action && "side" in source.action)expect(actual.action.side,scenario).toBe(source.action.side);
-      if("notionalUsd" in actual.action && "notionalUsd" in source.action){
-        // Catfolio floors executable lots at bid/ask+slippage; upstream risk returns a raw USD amount.
-        expect(actual.action.notionalUsd,scenario).toBeLessThanOrEqual(source.action.notionalUsd+1e-9);
-        expect(source.action.notionalUsd-actual.action.notionalUsd,scenario).toBeLessThan(1.01);
-      }
+      const source=sourceRisk({...input,jev:modelStatus}),actual=applyRisk({...input,jev:modelStatus});
+      expect(actual,scenario).toEqual(source);
     }
   });
 });

@@ -20,7 +20,7 @@ export function strategyFacts(id: BeeId, cfg: Config): string[] {
       ? "Full strategy size at entry; initial stop at the entry day's open. No forced entries."
       : "Size by max(0.5, absolute score / 9), capped at 60% annualized volatility. Code restores target size when the gap exceeds 25% of maximum notional and opens in the strongest trend when flat. Initial stop is ATR-based; channel stops ratchet in the position's favor.",
     `Maximum leverage ${cfg.risk.maxLeverage}x, with 3% margin headroom and a $${cfg.risk.maxNotionalUsdPerBee} absolute notional ceiling. Explicit per-cat notional cap: ${l.maxNotionalPct}% of equity.`,
-    `${l.maxTradesPerDay} new positions per UTC day, $${l.feeBudgetUsdDay} daily fee budget, ${l.cooldownMinutes}-minute discretionary opening cooldown, ${l.dailyLossStopPct}% daily loss stop. Stops remain independent of the model.`,
+    `${l.maxTradesPerDay} new positions per UTC day, $${l.feeBudgetUsdDay} daily fee budget, ${l.cooldownMinutes}-minute discretionary opening cooldown, ${l.dailyLossStopPct}% daily loss stop. Stop decisions are deterministic and run within the trading tick.`,
   ];
 }
 
