@@ -653,24 +653,25 @@ dd {
   padding-top: 13px;
   margin-top: 16px;
 }
-.decision-stream { margin: 24px 0 30px; padding: 18px; background: #12151b; border: 1px solid var(--line); border-radius: 14px; }
+.decision-stream { margin: 0; padding: 16px; min-width: 0; background: #121419; border: 1px solid var(--line); border-radius: 10px; }
 .stream-heading, .stream-toolbar, .stream-row-head { display: flex; align-items: center; gap: 12px; }
-.stream-heading h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.6px; margin-right: 4px; }
+.stream-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.stream-heading h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
 .stream-connection { display: flex; align-items: center; gap: 6px; font-size: 11px; }
 .stream-connection i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.stream-rate { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.stream-rate { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .stream-heading button { padding: 5px 9px; font-size: 11px; }
 .stream-toolbar { justify-content: space-between; flex-wrap: wrap; margin: 13px 0; }
-.stream-toolbar .journal-filters { margin: 0; }
+.stream-toolbar .journal-filters { margin: 0; flex-wrap: wrap; gap: 4px; }
 .stream-toolbar > span { color: var(--muted); font-size: 11px; }
 .stream-list { list-style: none; margin: 0; padding: 0 4px 0 0; max-height: 300px; overflow: auto; scrollbar-width: thin; scrollbar-color: #3c4452 transparent; }
-.stream-row { padding: 11px 14px; margin-bottom: 8px; background: #ffffff04; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; }
+.stream-row { padding: 10px; margin-bottom: 8px; background: #ffffff04; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; }
 .stream-row-head { gap: 10px; flex-wrap: wrap; }
 .stream-row-head img { height: 22px; width: 22px; border-radius: 50%; object-fit: cover; }
 .stream-cat { color: var(--accent); font-size: 12px; }
 .stream-choice { font: 600 12px ui-monospace, monospace; overflow-wrap: anywhere; }
-.stream-numbers { display: flex; flex-wrap: wrap; gap: 14px; margin-left: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.stream-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.stream-numbers { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.stream-options { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-top: 10px; }
 .stream-option { display: flex; justify-content: space-between; gap: 8px; position: relative; isolation: isolate; overflow: hidden; padding: 5px 8px; border-radius: 5px; background: #ffffff05; font: 10px ui-monospace, monospace; }
 .stream-option span:not(.stream-option-fill) { overflow-wrap: anywhere; }
 .stream-option-fill { position: absolute; inset: 0 auto 0 0; background: #64748b55; z-index: -1; }
@@ -1012,9 +1013,8 @@ dialog details {
     grid-template-columns: 1fr 1fr;
     align-items: start;
   }
-  .activity {
-    grid-column: 2;
-    grid-row: 1 / 3;
+  .decision-stream {
+    grid-column: 1 / -1;
   }
   .cat-hero {
     height: 215px;

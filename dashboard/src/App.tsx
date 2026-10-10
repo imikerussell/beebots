@@ -174,7 +174,6 @@ export function App() {
           <span className="muted">One position per persona</span>
         </div>
       </section>
-      <DecisionStream decisions={decisions} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={snap?.decisionIntervalMs} closed={!!snap?.closed} />
       <div className="desk-heading">
         <span className="eyebrow">
           ONE WALL-E. TWO PERSONAS. <span>/</span> 02
@@ -283,6 +282,7 @@ export function App() {
               </b>
             </div>
           </section>
+          <DecisionStream decisions={decisions} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={snap?.decisionIntervalMs} closed={!!snap?.closed} />
         </aside>
       </div>
       {report !== null && (
