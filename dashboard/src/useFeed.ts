@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CatId, Decision, Profile, Snapshot } from "./types";
 import { DECISION_LIMIT, decisionKey, isDecision, mergeDecisions } from "./decisionFeed";
 export type Curve = Array<[number, number]>;
+const CHART_REFRESH_MS = 60_000;
 export function useFeed() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -22,15 +23,22 @@ export function useFeed() {
   useEffect(() => {
     let alive = true;
     let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+    let chartTimer: ReturnType<typeof setTimeout> | undefined;
     const get = async <T>(path: string): Promise<T> => {
       const r = await fetch(path);
       if (!r.ok) throw new Error(path);
       return r.json() as Promise<T>;
     };
-    const charts = () =>
-      void get<Partial<Record<CatId, Curve>>>("/equity?days=30")
-        .then((c) => alive && setCurves(c))
-        .catch(() => {});
+    const charts = async () => {
+      try {
+        const curves = await get<Partial<Record<CatId, Curve>>>("/equity?days=30");
+        if (alive) setCurves(curves);
+      } catch { /* Keep the last chart while the engine is unavailable. */ }
+      finally {
+        // Wait after completion so slow queries cannot accumulate in this tab.
+        if (alive) chartTimer = setTimeout(() => void charts(), CHART_REFRESH_MS);
+      }
+    };
     const history = () => void get<unknown[]>(`/history?type=decision&n=${DECISION_LIMIT}`)
       .then((rows) => {
         if (!alive) return;
@@ -39,7 +47,7 @@ export function useFeed() {
       }).catch(() => { if (alive) setHistoryStatus("unavailable"); });
     history();
     void refresh();
-    charts();
+    void charts();
     let events: EventSource;
     let lastStreamSignal = Date.now();
     const connectStream = () => {
@@ -79,11 +87,11 @@ export function useFeed() {
         connectStream();
       }
       void refresh();
-      charts();
     }, 5000);
     return () => {
       alive = false;
       clearInterval(timer);
+      clearTimeout(chartTimer);
       clearTimeout(recoveryTimer);
       events.close();
     };

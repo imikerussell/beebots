@@ -29,6 +29,8 @@ const MAX_STREAMS = 2000;
 const MAX_STREAMS_PER_ADDR = 10;
 const MAX_HISTORY = 1000;
 const HISTORY_CACHE_MS = 2000;
+const EQUITY_CACHE_MS = 60_000;
+const MAX_EQUITY_CACHE_ENTRIES = 50;
 
 function json(res: ServerResponse, status: number, body: unknown) {
   const s = JSON.stringify(redact(body));
@@ -48,6 +50,8 @@ export function startServer(
   const streams = new Map<string, number>();
   let streamsTotal = 0;
   const historyCache = new Map<string, { at: number; body: string }>();
+  // Share expensive SQLite chart reads across visitors, with bounded memory for custom ranges.
+  const equityCache = new Map<number, { at: number; data: ReturnType<Db["equitySeries"]> }>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname.startsWith("/coach")) {
@@ -89,11 +93,17 @@ export function startServer(
           0.01,
           Math.min(60, Number(url.searchParams.get("days") ?? 30) || 30),
         );
-        return json(
-          res,
-          200,
-          e.db.equitySeries(Date.now() - days * 86_400_000, 720),
-        );
+        const now = Date.now();
+        let hit = equityCache.get(days);
+        if (!hit || now - hit.at >= EQUITY_CACHE_MS) {
+          const data = e.db.equitySeries(now - days * 86_400_000, 720);
+          hit = { at: Date.now(), data };
+          equityCache.delete(days);
+          if (equityCache.size >= MAX_EQUITY_CACHE_ENTRIES)
+            equityCache.delete(equityCache.keys().next().value!);
+          equityCache.set(days, hit);
+        }
+        return json(res, 200, hit.data);
       }
       case "/history": {
         const n = Math.max(
