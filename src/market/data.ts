@@ -8,6 +8,7 @@ import {
   pctChange,
   rsi,
   intradayTrend,
+  trendStats,
   zScore,
 } from "./indicators.js";
 import type {
@@ -37,7 +38,7 @@ export interface FeedOpts {
   allowNonCrypto: boolean;
   /** The widest cat spread gate, used for the shared universe. */
   spreadGateBps: number;
-  /** Coins that always get intraday trend data. */
+  /** Coins that always get the original four-hour trend data. */
   trendCoins: string[];
   allowedCoins?: string[];
 }
@@ -223,16 +224,16 @@ export class MarketFeed {
         const inst = this.instruments.get(id)!;
         try {
           const isTrend = trendIds.includes(id);
-          const [c15, c1h, c5, funding, fHist] = await Promise.all([
+          const [c15, c1h, c4h, funding, fHist] = await Promise.all([
             this.api.candles(id, "15m", 200),
             this.api.candles(id, "1H", 200),
-            isTrend ? this.api.candles(id, "5m", 100) : Promise.resolve(null),
+            isTrend ? this.api.candles(id, "4H", 400) : Promise.resolve(null),
             this.api.funding(id).catch(() => null),
             this.fundingHistory(id, now),
           ]);
           requireRecentCandles(c15, 15 * 60000, now);
           requireRecentCandles(c1h, HOUR, now);
-          if (c5) requireRecentCandles(c5, 5 * 60000, now);
+          if (c4h) requireRecentCandles(c4h, 4 * HOUR, now);
           // Confirmed candles only; keep the timestamp of successful indicator refresh per instrument.
           const s = computeStats(
             inst,
@@ -247,10 +248,8 @@ export class MarketFeed {
           }
           s.oiUsd = oi.get(id) ?? null;
           s.oiChg1hPct = this.oiChange1h(id, now);
-          if (c5) s.intraday = {
-            tiger: intradaySignal(c5, c15, 5, 15, now),
-            mochi: intradaySignal(c15, c1h, 15, 60, now),
-          };
+          s.breakout = breakoutLevels(c1h, now, BREAKOUT_K);
+          if (c4h) s.trend = trendStats(c4h.filter(c => c.confirmed && c.ts + 4 * HOUR <= now));
           next.set(id, s);
           this.dataErrors.delete(id);
         } catch (err) {

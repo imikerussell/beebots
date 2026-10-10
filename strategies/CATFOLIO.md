@@ -1,30 +1,25 @@
-# Catfolio intraday strategies
+# Catfolio: restored upstream trading behavior
 
-Version: `catfolio-3-intraday`. These replace the earlier daily/four-hour adaptations. The historical Breezy and Bizzy modules remain research references; they are not the scheduled brains.
+Source baseline: [imikerussell/beebots commit 6d3fe0d4f72dd25676c2f5caac0b83dff05031fb](https://github.com/imikerussell/beebots/tree/6d3fe0d4f72dd25676c2f5caac0b83dff05031fb), the upstream commit immediately before the Catfolio conversion. Strategy version: `catfolio-4-upstream-restored`.
 
-| Rule | Tiger | Mochi |
-|---|---|---|
-| Universe | BTC, ETH, SOL | BTC, ETH |
-| Trend bars | 15 minutes | 1 hour |
-| Entry bars | 5 minutes | 15 minutes |
-| Trend threshold | +3 | +4 and no bearish channels |
-| Entry setup | Close above preceding 12 five-minute highs; positive 15-minute momentum | Strongest eligible hourly trend; positive 45-minute momentum |
-| Initial stop | 2 × five-minute ATR | 2 × hourly ATR |
-| Maximum holding time | 120 minutes | 360 minutes |
-| Entries / UTC day | 8 | 4 |
-| Entry cooldown | 15 minutes | 30 minutes |
-| Maximum notional / equity | 50% | 50% |
-| Stop risk / equity including estimated fees | 0.5% | 0.25% |
-| Daily loss stop | 5% | 2% |
+## Active strategies
 
-Nine Donchian horizons use 3, 5, 8, 12, 18, 24, 36, 48 and 72 completed trend bars. Tiger covers 45 minutes–18 hours; Mochi covers 3–72 hours. Each channel is long, short or off; the score is long channels minus short channels. Only completed candles enter calculations. Contiguous recent histories are required, and volatility uses 90 returns annualized with the actual number of bars per year.
+- DARK Wall-E (`tiger`) runs `src/bees/bizzy.ts`: daily Larry Williams breakout, BTC/ETH/SOL/HYPE, long-only, full strategy size, stop at day open, hold/cut loss, 23:59 UTC exit. One new position per UTC day by default, no forced entry.
+- Good Wall-E (`mochi`) runs `src/bees/breezy.ts`: original nine Donchian horizons on 4h bars, BTC/ETH, both directions, volatility sizing with source floor, +1R adds, directional three-point trims, flips, coin switches, channel trailing, flat forcing and target rebalancing. Three new positions/day by default.
+- `src/bees/custom.ts` is the original rules/coin wrapper. `src/cats.ts` only binds identities and renders descriptions/diagnostics. It must never replace the source menus or strategy math.
 
-Tiger's breakout threshold excludes the confirming candle itself. Price must remain above the threshold and within 25% of the preceding hour's range beyond it. Funding must be known and ≤0.03% per settlement. There is no UTC-midnight entry blackout or daily breakout requirement.
+The three brain/wrapper files above match this source baseline. Source risk ordering is restored: stops/loss/retirement first, model failure holds, discretionary opening gates, flat forcing, then position rebalancing. Upstream forced entry and rebalance deliberately do not use the discretionary opening cooldown. Adds do not increment the new-position counter; switches do. These are source behaviors, not extra Catfolio restrictions.
 
-Mochi sizes by score / 9, capped at a 25% annualized portfolio-volatility target and the notional/risk limits. A recent 24-hour closing extreme breaks score ties. A three-point decline from entry offers one half-trim, persisted across restarts.
+## Explicit retained differences
 
-Both require the initial ATR stop distance to cover at least twice the estimated round-trip fees, spread and adverse slippage. This is a movement-size filter, not an expected-return estimate. Both trail the supportive channel midpoint without loosening stops and exit deterministically on a lost trend or maximum holding time. Fresh quotes are required for execution.
+This is functional restoration of the two source strategies, not a byte-for-byte rollback of the whole application. Cat names, two independent capital allocations, dashboard, provider selection/Vercel Jev integration, 20-hour owner-approved trainer and persistent audit records remain.
 
-Jev evaluates eligible menus every minute; deterministic protection runs every five seconds. Entry caps, cooldowns, fee budgets, loss stops, one-position limits, lot-size rounding, long-only trading and model-response validation remain enforced. WAIT is valid; there are no forced trades, adds or averaging down. More frequent signals are not evidence of better returns. These changes have rule/execution tests, not a profitability backtest.
+Operational guards retained: fresh quotes for execution, per-coin indicator freshness, valid initial stops, completed candle inputs, complete previous-day range validation, lot-size flooring, current-menu revalidation after inference, independent protective loop, transactional fills/stops, stale-response rejection, unknown-order blocking and exchange-rejection backoff. The protective loop cannot open/add independently of a decision. Switches require a fully filled close and a fresh recheck before the new leg; rejected/unknown/partial closes leave the remaining position intact.
 
-The existing ledger is preserved. Audits record the strategy version, effective rules and both sets of intraday inputs. Old and new trading results should be separated by strategy version when comparing performance.
+Source notional sizing uses leverage x equity x 0.97, capped at MAX_NOTIONAL_USD_PER_BEE. Explicit per-cat notional caps remain optional ceilings; their defaults are now 200%. Accounts retain their configured capital and daily loss limits (source default 8%). No replacement-engine stop-risk sizing, bullish-only gate, minimum trend score, short-term confirmation, fee-distance filter or 2h/6h exit is active. The original conviction labels/gates are passed to the decision provider.
+
+## Upgrade and validation
+
+Review deployment overrides against `.env.example`; previous 50% notional caps, 1x leverage or altered cooldowns remain explicit overrides until edited. Database history and live positions are preserved. Old trainer overlays are retired with their review history retained. Old pending proposals expire; new proposals see source move names and observables.
+
+Regression coverage compares both cat adapters directly to their source brains across directions and scores, checks shared source file hashes, and exercises source risk, short fills, adds, trims/restart, flips/switches, partial/rejected closes, caps, model outages, data freshness and unchanged paper balances. Tests verify implementation behavior; they do not establish profitability.

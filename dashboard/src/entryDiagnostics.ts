@@ -24,6 +24,9 @@ export function entryExplanations(c: EntryDiagnostic): string[] {
   }
   return c.blockers.map(reason => {
     switch (reason) {
+      case "missing_breakout_levels": return "Waiting for today's open and the complete previous day's range.";
+      case "breakout_not_reached": return `Price $${number(c.mid)} has not reached breakout trigger $${number(c.breakoutTrigger)}.`;
+      case "missing_trend_data": return "Waiting for Donchian trend candle history.";
       case "minTrendScore": return `Trend score ${number(c.trendScore, 0)}; needs at least ${number(c.minTrendScore, 0)} on ${c.trendMinutes ?? "?"}-minute bars.`;
       case "momentum_not_positive": return `${c.momentumMinutes ?? "Recent"}-minute momentum ${pct(c.momentumPct)}; must be above 0%.`;
       case "move_too_small_after_costs": return `Volatility filter: ATR stop distance ${pct(c.stopDistancePct)}; needs at least ${pct(c.minStopDistancePct)} (2 × estimated round-trip costs of ${pct(c.roundTripCostPct)}).`;

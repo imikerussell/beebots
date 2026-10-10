@@ -29,25 +29,21 @@ describe("intraday data and protective rules", () => {
     expect(intradayTrend(candles, 96)).toMatchObject({score: 9, slicesAvailable: 9});
     expect(intradayTrend(candles, 96).rv90Pct).toBeCloseTo(intradayTrend(candles, 24).rv90Pct! * 2);
   });
-  it("does not use the historical four-hour signal or daily breakout as an entry gate", () => {
-    for (const id of ["tiger", "mochi"] as const) {
-      const h = riskFixture(id); h.s.trend!.score = -9; h.s.breakout = null;
-      expect(h.brain.menu(h.ctx).LONG_BTC).toBeDefined();
+  it("keeps historical intraday helpers separate from the restored source brains", () => {
+    for (const id of ["tiger","mochi"] as const) {
+      const h = riskFixture(id), original = h.brain.menu(h.ctx);
       h.s.intraday = undefined;
-      expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT"]);
+      expect(h.brain.menu(h.ctx)).toEqual(original);
     }
   });
-  it("blocks movements too small for estimated fees, spread and slippage", () => {
-    const h = riskFixture(); h.s.intraday!.tiger.atrPct = 0.01;
-    expect(h.brain.menu(h.ctx).LONG_BTC).toBeUndefined();
-    h.s.intraday!.tiger.atrPct = 0.5;
-    expect(h.brain.menu(h.ctx).LONG_BTC).toBeDefined();
-  });
-  it.each(["tiger", "mochi"] as const)("%s exits at the holding limit without model access or entry budget", id => {
-    const h = riskFixture(id); h.b.position = position(h.s, {stopPx: 90, openedAt: NOW});
-    h.b.tradesToday = 100; h.b.feesTodayUsd = 100;
-    h.ctx.now = NOW + h.cfg.strategies[id].maxHoldMinutes * 60000;
-    h.v.tickers.get(h.s.instId)!.ts = h.ctx.now;
-    expect(h.run(null, false).action).toMatchObject({kind: "close", reason: "time_stop"});
+  it("Bizzy exits at UTC close; Breezy has no replacement-engine six-hour cutoff",()=>{
+    const t=riskFixture(),m=riskFixture("mochi");
+    for(const h of [t,m]) {
+      h.b.position=position(h.s,{stopPx:90,openedAt:NOW}); h.b.tradesToday=100;
+      h.ctx.now=Math.floor(NOW/86400000)*86400000+86400000-60000;
+      h.v.tickers.get(h.s.instId)!.ts=h.ctx.now;
+    }
+    expect(t.run(null,false).action).toMatchObject({kind:"close",reason:"time_stop"});
+    expect(m.run(null,false).action.kind).toBe("none");
   });
 });

@@ -32,12 +32,12 @@ export const MARGIN_HEADROOM = 0.97;
 /** Max notional before the live ramp: min(MAX_LEVERAGE x equity x MARGIN_HEADROOM, MAX_NOTIONAL_USD_PER_BEE). */
 export function maxNotionalUsd(ctx: BeeContext): number {
   const cat = ctx.cfg.cats[ctx.bee.id];
-  if (cat) return Math.max(0, (ctx.bee.equityUsd * cat.maxNotionalPct) / 100);
   return Math.max(
     0,
     Math.min(
       ctx.cfg.risk.maxLeverage * ctx.bee.equityUsd * MARGIN_HEADROOM,
       ctx.cfg.risk.maxNotionalUsdPerBee,
+      cat ? ctx.bee.equityUsd * cat.maxNotionalPct / 100 : Infinity,
     ),
   );
 }

@@ -73,7 +73,7 @@ export interface CoinStats {
   newsZ: number | null;
   sentiment: number | null;
   intraday?: { tiger: IntradaySignal; mochi: IntradaySignal };
-  // Historical 4h trend (legacy strategy components only)
+  // Upstream Breezy Donchian trend inputs
   trend?: TrendStats;
   /** Larry Williams volatility breakout (bizzy): today's UTC open + k x yesterday's range, from 1h bars. */
   breakout?: { dayOpen: number; prevRange: number; trigger: number; dayStart?: number } | null;

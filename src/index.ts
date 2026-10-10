@@ -47,8 +47,8 @@ async function main() {
         cfg.cats.tiger.spreadGateBps,
         cfg.cats.mochi.spreadGateBps,
       ),
-      trendCoins: ["BTC", "ETH", "SOL"],
-      allowedCoins: ["BTC", "ETH", "SOL"],
+      trendCoins: ["BTC", "ETH"],
+      allowedCoins: ["BTC", "ETH", "SOL", "HYPE"],
     },
     null,
     () =>

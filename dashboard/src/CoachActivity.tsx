@@ -22,7 +22,7 @@ export function CoachActivity({ state, cat }: { state?: CoachState; cat: CatId }
     {phase === "paused" ? <p>{state.message}</p> : phase === "reviewing" ? <p role="status">The evidence has been sent to {latest?.model ?? state.model}. Waiting for its assessment; nothing changes automatically. Reviews time out after 60 seconds.</p>
       : phase === "awaiting_approval" ? <p>Review the explanation, then approve or discard. The current settings stay in place until you approve.</p>
       : phase === "queued" ? <p>Enough observations are available. The engine will start this review on its next check, after any other cat’s review finishes.</p>
-      : phase === "scheduled" ? <p>Daily review already attempted. Next eligible review: {activity.nextReviewAt ? when(activity.nextReviewAt) : "waiting for observations"}.</p>
+      : phase === "scheduled" ? <p>Trainer cooldown active. Next eligible review: {activity.nextReviewAt ? when(activity.nextReviewAt) : "waiting for observations"}.</p>
       : <div className="coach-observations">
         <label>Decisions <span>{activity.observations} / {activity.requiredObservations} minimum</span><progress max={activity.requiredObservations} value={Math.min(activity.observations, activity.requiredObservations)} /></label>
         <label>Observation time <span>{activity.observedMinutes} / {activity.requiredMinutes} min minimum</span><progress max={activity.requiredMinutes} value={Math.min(activity.observedMinutes, activity.requiredMinutes)} /></label>

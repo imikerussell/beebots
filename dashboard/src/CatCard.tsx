@@ -56,6 +56,8 @@ export function CatCard({
 }) {
   const identity = CAT_META[id];
   const name = catName(id, cat?.name ?? meta?.name);
+  const trainerEntry = snap?.coach?.entries.find(e => e.cat === id && e.review && "quip" in e.review && ["pending", "accepted"].includes(e.status));
+  const trainerReview = trainerEntry?.review;
   const metrics = cat
     ? [
         ["Realized P&L", usd(cat.totals.realisedUsd)],
@@ -112,6 +114,7 @@ export function CatCard({
         </span>
       </div>
       <div className="cat-body">
+        {trainerReview && "quip" in trainerReview && <div className="trainer-quip"><p><b>Trainer{trainerEntry?.status === "pending" ? " suggestion" : ""}:</b> {trainerReview.quip}</p><p>{trainerReview.reason}</p></div>}
         <div className="equity-heading">
           <span className="eyebrow">Portfolio equity</span>
           <span
@@ -213,8 +216,8 @@ export function CatCard({
           <p>
             {meta?.tagline ??
               (id === "tiger"
-                ? "Fast intraday breakout"
-                : "Intraday trend follower")}
+                ? "Bizzy volatility breakout"
+                : "Breezy long/short trend")}
           </p>
           {meta?.strategyFacts?.length ? (
             <ul>

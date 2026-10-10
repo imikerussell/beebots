@@ -191,25 +191,25 @@ export function loadConfig(
     cats[id] = {
       allocationPct: allocation,
       startEquityUsd: (total * allocation) / 100,
-      maxNotionalPct: num(`${p}_MAX_NOTIONAL_PCT`, 50, 0.01, 100),
+      maxNotionalPct: num(`${p}_MAX_NOTIONAL_PCT`, 200, 0.01, 200),
       stopRiskPct: num(`${p}_STOP_RISK_PCT`, tiger ? 0.5 : 0.25, 0.001, 10),
       dailyLossStopPct: num(
         `${p}_DAILY_LOSS_STOP_PCT`,
-        tiger ? 5 : 2,
+        8,
         0.01,
         100,
       ),
       maxTradesPerDay: num(
         `${p}_MAX_ENTRIES_PER_DAY`,
-        tiger ? 8 : 4,
+        tiger ? 1 : 3,
         0,
         1000,
         true,
       ),
-      cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? 15 : 30, 0),
-      spreadGateBps: num(`${p}_SPREAD_GATE_BPS`, tiger ? 10 : 3, 0.01, 100),
-      minVolumeUsd: num(`${p}_MIN_24H_VOLUME_USD`, tiger ? 1e6 : 10e6, 0),
-      feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, tiger ? 2 : 1, 0),
+      cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? 5 : 240, 0),
+      spreadGateBps: num(`${p}_SPREAD_GATE_BPS`, 5, 0.01, 100),
+      minVolumeUsd: num(`${p}_MIN_24H_VOLUME_USD`, 1e6, 0),
+      feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, 1, 0),
       minActionProbability: num(
         `${p}_MIN_ACTION_PROBABILITY`,
         tiger ? 0.55 : 0.7,
@@ -218,9 +218,9 @@ export function loadConfig(
       ),
       minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3, true),
       minTrendScore: num(`${p}_MIN_TREND_SCORE`, tiger ? 3 : 4, 1, 9, true),
-      stopAtrMult: num(`${p}_STOP_ATR_MULT`, 2, 0.1, 20),
-      longOnly: true,
-      maxFlatMinutes: Infinity,
+      stopAtrMult: num(`${p}_STOP_ATR_MULT`, tiger ? 1.5 : 2, 0.1, 20),
+      longOnly: tiger,
+      maxFlatMinutes: num(`${p}_MAX_FLAT_MINUTES`, tiger ? 20 : 0, 0),
     };
     const saved = settings?.cats[i];
     if (saved && saved.id !== id)
@@ -230,13 +230,13 @@ export function loadConfig(
     slots[id] = {
       name: str(`${p}_NAME`, saved?.name ?? (tiger ? "DARK Wall-E" : "Good Wall-E")),
       style: tiger ? "bizzy" : "breezy",
-      tagline: tiger ? "Fast intraday breakout" : "Intraday trend follower",
+      tagline: tiger ? "Bizzy volatility breakout" : "Breezy long/short trend",
       rules:
-        saved?.rules ??
+        migrateStrategyRules(saved?.rules) ??
         (tiger
-          ? "Trade confirmed five-minute breakouts with a supportive fifteen-minute trend. Avoid chasing; exit within two hours. WAIT is valid."
-          : "Follow an hourly intraday trend with fifteen-minute entry checks, volatility sizing and channel trailing stops. Exit within six hours. Keep cash without a strong trend."),
-      coins: tiger ? ["BTC", "ETH", "SOL"] : ["BTC", "ETH"],
+          ? "Take convincing BREAKOUT entries and ride them to the day close. CUT_LOSS when the breakout is failing."
+          : "Follow the stronger directional trend. Ride winners and add above +1R. Trim weakening trends or switch when the other direction or coin is stronger."),
+      coins: tiger ? ["BTC", "ETH", "SOL", "HYPE"] : ["BTC", "ETH"],
       customImage: false,
       fromSetup: !!saved,
     };
@@ -327,9 +327,9 @@ export function loadConfig(
     paperSlippageBps: num("PAPER_SLIPPAGE_BPS", 2, 0, 100),
     risk: {
       startEquityUsd: total / 2,
-      maxLeverage: num("MAX_LEVERAGE", 1, 0.01, 2),
-      maxNotionalUsdPerBee: total,
-      dailyLossStopPct: 5,
+      maxLeverage: num("MAX_LEVERAGE", 2, 0.01, 2),
+      maxNotionalUsdPerBee: num("MAX_NOTIONAL_USD_PER_BEE", 700, 0.01),
+      dailyLossStopPct: 8,
       retireAtPct: 40,
       maxFlatMinutes: Infinity,
       liveSizeMultiplier: num("LIVE_SIZE_MULTIPLIER", 0.25, 0.01, 1),
@@ -337,7 +337,7 @@ export function loadConfig(
       takerFeeRate: num("TAKER_FEE_RATE", 0.0005, 0, 0.1),
     },
     bees: { bizzy: cats.tiger, breezy: cats.mochi, boozy: cats.tiger },
-    breezy: { minOpenProb: cats.mochi.minActionProbability, minSizeUsd: 0 },
+    breezy: { minOpenProb: cats.mochi.minActionProbability, minSizeUsd: num("BREEZY_MIN_SIZE_USD", 10, 0) },
     bizzy: { sizeFraction: 1, universeSize: 3, timeStopMinutes: 240 },
     boozy: { candidates: 3 },
     universe: {
@@ -360,4 +360,15 @@ export function loadConfig(
     settingsPath: str("SETTINGS_PATH", "./data/catfolio-settings.json"),
     logLevel: logLevel as Config["logLevel"],
   };
+}
+
+/** Replace only the shipped replacement-engine defaults, never arbitrary owner rules. */
+function migrateStrategyRules(rules: string | undefined): string | undefined {
+  const obsolete = [
+    "Trade a confirmed daily volatility breakout, avoid chasing, and close before UTC midnight. WAIT is valid.",
+    "Follow the nine-channel 4h Donchian ensemble with volatility sizing and channel trailing stops. Keep cash without a strong trend.",
+    "Trade confirmed five-minute breakouts with a supportive fifteen-minute trend. Avoid chasing; exit within two hours. WAIT is valid.",
+    "Follow an hourly intraday trend with fifteen-minute entry checks, volatility sizing and channel trailing stops. Exit within six hours. Keep cash without a strong trend.",
+  ];
+  return rules && obsolete.includes(rules) ? undefined : rules;
 }

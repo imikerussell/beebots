@@ -14,7 +14,7 @@ describe("entry diagnostics", () => {
     h.s.intraday!.tiger.atrPct = 0.01;
     h.v.dataErrors = new Map([[h.s.instId, { at: NOW - 1000, message: "5m candle request timed out" }]]);
     expect(entryBlockers("tiger", h.s, h.ctx)).toEqual(["stale_indicators"]);
-    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["WAIT"]);
+    expect(h.run().vetoedBy).toBe("stale_indicators");
     const d = entryDiagnostics("tiger", h.ctx)[0]!;
     expect(d).toMatchObject({ indicatorsAgeMs: 600000, maxIndicatorsAgeMs: 180000, feedError: "5m candle request timed out" });
     const explanations = entryExplanations(d);
@@ -23,26 +23,16 @@ describe("entry diagnostics", () => {
     expect(explanations.join(" ")).not.toContain("Volatility filter");
   });
 
-  it("explains the cost and breakout gates with the exact values used by the rules", () => {
-    const h = riskFixture();
-    h.s.intraday!.tiger.atrPct = 0.04;
-    h.s.intraday!.tiger.confirmed.close = 99.5;
+  it("reports the actual source breakout without the removed cost or momentum gates", () => {
+    const h = riskFixture(); h.s.mid = 99.5;
+    h.s.intraday!.tiger.atrPct = 0.0001; h.s.intraday!.tiger.momentumPct = -1;
     const d = entryDiagnostics("tiger", h.ctx)[0]!;
-    expect(d.stopDistancePct).toBe(0.08);
-    expect(d.roundTripCostPct).toBeCloseTo(0.15);
-    expect(d.minStopDistancePct).toBeCloseTo(0.30);
-    expect(entryExplanations(d).join(" ")).toContain("0.080%; needs at least 0.300%");
-    expect(entryExplanations(d).join(" ")).toContain("close $99.50 must exceed $100.00");
-    expect(d.confirmedAgeMs).toBe(0);
-    expect(d.confirmedAt).toBe(NOW);
+    expect(d.blockers).toEqual(["breakout_not_reached"]);
+    expect(entryExplanations(d).join(" ")).toContain("$99.50 has not reached breakout trigger $100.00");
+    expect(d).not.toHaveProperty("minStopDistancePct");
   });
-
-  it("distinguishes an old entry candle from an absent one and hides misleading historical blockers", () => {
-    const h = riskFixture();
-    h.s.intraday!.tiger.confirmed.ts = NOW - 20 * 60000;
-    expect(entryBlockers("tiger", h.s, h.ctx)).toEqual(["missing_confirmed_entry_close"]);
-    expect(entryExplanations(entryDiagnostics("tiger", h.ctx)[0]!).join(" ")).toContain("15.0 min; limit 6.0 min");
-    const legacy = { coin: "BTC", blockers: ["stale_indicators", "move_too_small_after_costs", "minTrendScore"] };
+  it("does not reinterpret historical stale decisions as current failed market conditions", () => {
+    const legacy = {coin:"BTC",blockers:["stale_indicators","move_too_small_after_costs","minTrendScore"]};
     expect(entryExplanations(legacy).join(" ")).toContain("not recorded");
     expect(entryExplanations(legacy).join(" ")).not.toContain("Volatility filter");
   });
@@ -56,8 +46,8 @@ describe("refresh failure visibility and recovery", () => {
       instruments: async () => [...h.v.instruments.values()],
       tickers: async () => { if (failTickers) throw new Error("ticker request timed out"); return h.v.tickers; },
       candles: async (_id, bar) => {
-        if (failCandles && bar === "5m") throw new Error("5m request token=secretvalue timed out");
-        const minutes = bar === "5m" ? 5 : bar === "15m" ? 15 : 60;
+        if (failCandles && bar === "4H") throw new Error("4H request token=secretvalue timed out");
+        const minutes = bar === "4H" ? 240 : bar === "15m" ? 15 : 60;
         return Array.from({ length: 200 }, (_, i) => ({ ts: NOW - (200 - i) * minutes * 60000, o: 100, h: 101, l: 99, c: 100, volUsd: 1000, confirmed: true }));
       },
       openInterest: async () => new Map(),
@@ -70,7 +60,7 @@ describe("refresh failure visibility and recovery", () => {
     failCandles = true;
     await feed.refresh(NOW + 240000);
     expect(feed.view().stats.get(h.s.instId)?.refreshedAt).toBe(NOW);
-    expect(feed.view().dataErrors?.get(h.s.instId)?.message).toBe("5m request token=[redacted] timed out");
+    expect(feed.view().dataErrors?.get(h.s.instId)?.message).toBe("4H request token=[redacted] timed out");
     h.ctx.view = feed.view(); h.ctx.now = NOW + 240000;
     expect(entryDiagnostics("tiger", h.ctx)[0]?.blockers).toEqual(["stale_indicators"]);
     failTickers = true;

@@ -97,9 +97,13 @@ export class Engine {
     this.lastFundingSlot = fundingSlot(this.startedAt);
     this.coach = new CatCoach({ cfg: d.cfg, db: d.db, now: this.now, fetch: d.coachFetch,
       closed: () => this.stopped || this.closedAt !== null || !!d.closeRequested?.(),
-      hasPosition: (id) => !!this.bees[id]?.position,
       changed: (id) => { delete this.brains[id]; },
-      context: (id) => ({ account: this.publicBee(id), diagnostics: entryDiagnostics(id, this.ctx(id)), marketUpdatedAt: d.feed.lastRefreshAt }),
+      context: (id) => ({ account: this.publicBee(id), diagnostics: entryDiagnostics(id, this.ctx(id)), marketUpdatedAt: d.feed.lastRefreshAt,
+        jevState: buildSnapshot(this.brain(id), this.ctx(id)).state, menu: this.brain(id).menu(this.ctx(id)) }),
+      universe: () => ({ refreshedAt: d.feed.lastRefreshAt, coins: [...d.feed.view().instruments.values()].map(i => ({
+        coin: i.coin, marketEligible: d.feed.view().gated.includes(i.instId),
+        indicatorsUpdatedAt: d.feed.view().stats.get(i.instId)?.refreshedAt ?? null,
+      })) }),
     });
   }
 
@@ -243,7 +247,9 @@ export class Engine {
         ctx.view.tickers.get(p.instId)?.mid,
         ctx.view.instruments.get(p.instId)?.ctVal,
       );
-      const stop = this.brain(id).trail?.(ctx);
+      const stats = ctx.view.stats.get(p.instId);
+      const age = now - (stats?.refreshedAt ?? ctx.view.ts);
+      const stop = age >= 0 && age <= 3 * this.d.cfg.dataRefreshMs ? this.brain(id).trail?.(ctx) : null;
       if (
         stop !== undefined &&
         stop !== null &&
@@ -268,8 +274,10 @@ export class Engine {
     id: BeeId,
     proposal: Proposal | null,
     available: boolean,
+    protectiveOnly = false,
   ): RiskResult {
     return applyRisk({
+      protectiveOnly,
       ctx: this.ctx(id),
       brain: this.brain(id),
       proposal,
@@ -299,7 +307,7 @@ export class Engine {
       else
         await Promise.all(
           BEES.map(async (id) => {
-            const risk = this.risk(id, null, true);
+            const risk = this.risk(id, null, true, true);
             this.setCap(id, risk);
             if (
               risk.action.kind !== "none" ||
@@ -345,6 +353,8 @@ export class Engine {
         brain = this.brain(id),
         ctx = this.ctx(id, now),
         menu = brain.menu(ctx);
+      // Empty source menus mean no decision is needed; expose a rules-only WAIT to providers.
+      if (Object.keys(menu).length === 0) menu.WAIT = {desc:"No source strategy entry available", intent:{kind:"hold"}};
       const snap = buildSnapshot(brain, ctx);
       const before = this.positionVersion(id);
       const rulesBefore = coachRevision(this.d.cfg, id);
@@ -432,7 +442,10 @@ export class Engine {
         config: {
           ...decisionConfiguration(this.d.cfg),
           limits: this.d.cfg.cats[id],
-          strategyParameters: this.d.cfg.strategies[id],
+          sourceStyle: this.d.cfg.slots[id].style,
+          coachRules: this.d.cfg.slots[id].rules,
+          allowedCoins: this.d.cfg.slots[id].coins,
+          openGate: brain.openGate ? { minConviction: brain.openGate.minConviction, minProb: brain.openGate.minProb(ctx) } : null,
           risk: this.d.cfg.risk,
           timing: {
             decisionMs: this.d.cfg.tickMs,
@@ -646,9 +659,31 @@ export class Engine {
           else log.info("trim rounds to zero, skipped", { bee: id });
           return;
         }
-        case "add":
-        case "switch":
-          return; // Catfolio never adds, averages down, or flips directly.
+        case "add": {
+          if (!p || !freshTicker(ctx, p.instId)) return;
+          const inst = ctx.view.instruments.get(p.instId), t = ctx.view.tickers.get(p.instId)!;
+          const slip = this.d.cfg.paperSlippageBps / 10000;
+          const px = p.side === "long" ? t.ask * (1 + slip) : t.bid * (1 - slip);
+          const n = inst ? contractsFor(action.notionalUsd, inst, px) : 0;
+          if (n > 0) await this.order(id, decisionId, p.instId, p.side === "long" ? "buy" : "sell", n, false, "add");
+          return;
+        }
+        case "switch": {
+          if (!p) return;
+          const ok = await this.order(id, decisionId, p.instId, p.side === "long" ? "sell" : "buy", p.contracts, true, "switch_close");
+          // A rejected, unknown or partial close must never open the replacement leg.
+          if (!ok || this.bees[id].position || this.stopped || this.closedAt !== null || this.d.closeRequested?.()) return;
+          // Recheck fresh market, caps and size after the close, without imposing a second cooldown on the same switch.
+          const nextCtx = this.ctx(id);
+          const nextBrain = this.brain(id);
+          const candidate = Object.values(nextBrain.menu(nextCtx)).find(o => o.intent.kind === "open" && o.intent.instId === action.instId && o.intent.side === action.side);
+          if (!candidate) return;
+          const risk = applyRisk({ctx:{...nextCtx, bee:{...nextCtx.bee, lastOrderAt:null}}, brain:nextBrain,
+            proposal:{label:"switch_open",intent:candidate.intent,prob:1,conviction:_conviction}, modelStatus:"ok",
+            sizeMult:this.sizeMult(this.now()), dataAgeMs:this.now()-this.d.feed.lastRefreshAt, maxDataAgeMs:3*this.d.cfg.dataRefreshMs});
+          if (risk.action.kind === "open") await this.openPosition(id, decisionId, action.instId, action.side, Math.min(action.notionalUsd, risk.action.notionalUsd));
+          return;
+        }
         case "open":
           await this.openPosition(
             id,
@@ -821,7 +856,7 @@ export class Engine {
         ctVal: inst.ctVal,
         ts: res.ts,
       });
-      if (!reduceOnly && bee.position) {
+      if (!reduceOnly && purpose === "open" && bee.position) {
         bee.tradesToday++;
         bee.lastEntryAt = res.ts;
         const p = bee.position;
@@ -832,12 +867,16 @@ export class Engine {
           this.ctx(id),
         );
         p.initialStopPx = p.stopPx;
-        p.entryScore = this.d.feed.view().stats.get(instId)?.intraday?.[id]?.trend.score;
+        p.entryScore = this.d.feed.view().stats.get(instId)?.trend?.score;
         p.trendTrimmed = false;
         p.riskUsd =
           p.stopPx === null
             ? 0
             : sizedRiskUsd(p.contracts, inst.ctVal, p.entryPx, p.stopPx);
+      }
+      if (!reduceOnly && purpose === "add" && bee.position && this.brain(id).protectAdds) {
+        const p = bee.position;
+        p.stopPx = p.stopPx === null ? p.entryPx : p.side === "long" ? Math.max(p.stopPx, p.entryPx) : Math.min(p.stopPx, p.entryPx);
       }
       if (reduceOnly && purpose === "trim" && bee.position) bee.position.trendTrimmed = true;
       bee.slippageUsd += res.slippageUsd ?? 0;

@@ -21,11 +21,11 @@ export function riskFixture(id: BeeId = "tiger") {
     cfg,
     knobs: cfg.cats[id],
     now: NOW,
-    uplR: null,
+    uplR: null as number | null,
   };
   const proposal = {
-    label: "LONG_BTC",
-    intent: brain.menu(ctx).LONG_BTC!.intent,
+    label: id === "tiger" ? "BREAKOUT_BTC" : "LONG_BTC",
+    intent: brain.menu(ctx)[id === "tiger" ? "BREAKOUT_BTC" : "LONG_BTC"]!.intent,
     prob: 0.9,
     conviction: 3,
   };
@@ -34,7 +34,7 @@ export function riskFixture(id: BeeId = "tiger") {
       ctx,
       brain,
       proposal: p,
-      modelStatus: available ? "ok" : "unreachable",
+      modelStatus: available ? (p ? "ok" : "no_options") : "unreachable",
       sizeMult: 1,
       dataAgeMs: 0,
       maxDataAgeMs: 180000,

@@ -24,6 +24,8 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 function answer(ask: DecisionAsk, choice = "WAIT"): DecisionResult {
+  if (choice === "LONG_BTC" && ask.menu.BREAKOUT_BTC) choice = "BREAKOUT_BTC";
+  if (choice === "HOLD" && ask.menu.HOLD_WINNER) choice = "HOLD_WINNER";
   return {
     ok: true,
     choice,
@@ -159,8 +161,8 @@ describe("Catfolio engine, protection and recovery", () => {
       .get("tiger") as { audit: string };
     const audit = JSON.parse(row.audit);
     expect(audit).toMatchObject({
-      strategyVersion: "catfolio-3-intraday",
-      rubricVersion: "signal-strength-1",
+      strategyVersion: "catfolio-4-upstream-restored",
+      rubricVersion: "upstream-style-conviction-1",
       config: { model: "", slippageBps: 2 },
       response: { model: "mock-nimble" },
     });
@@ -375,7 +377,7 @@ describe("Catfolio engine, protection and recovery", () => {
     bad.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  it("persists Breezy entry score and one-time trim across restart, then protects without inference", async () => {
+  it("persists source Breezy entry score and allows subsequent trims after restart; stops still protect", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cat-trim-")), path = join(dir, "run.sqlite");
     const choose: DecisionProvider["decide"] = async ask => answer(ask,
       ask.menu.TRIM_HALF ? "TRIM_HALF" : ask.menu.HOLD ? "HOLD" : ask.menu.LONG_BTC ? "LONG_BTC" : "WAIT");
@@ -383,21 +385,21 @@ describe("Catfolio engine, protection and recovery", () => {
     await first.engine.tick();
     const original = first.engine.bees.mochi.position!.contracts;
     expect(first.engine.bees.mochi.position!.entryScore).toBe(9);
-    first.s.intraday!.mochi.trend.score = 6;
+    first.s.trend!.score = 6;
     await first.engine.tick();
     expect(first.engine.bees.mochi.position).toMatchObject({ entryScore: 9, trendTrimmed: true });
     const remaining = first.engine.bees.mochi.position!.contracts;
     expect(remaining).toBeLessThan(original);
     await first.close();
     const second = await harness(choose, { db: new Db(path) });
-    second.s.intraday!.mochi.trend.score = 6;
+    second.s.trend!.score = 6;
     await second.engine.tick();
-    expect(second.engine.bees.mochi.position!.contracts).toBe(remaining);
-    expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trim'").all()).toHaveLength(1);
-    second.s.intraday!.mochi.trend.score = 0;
+    expect(second.engine.bees.mochi.position!.contracts).toBeLessThan(remaining);
+    expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trim'").all()).toHaveLength(2);
+    second.engine.bees.mochi.position!.stopPx = 101;
     await second.engine.protectiveTick();
     expect(second.engine.bees.mochi.position).toBeNull();
-    expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trend_lost'").all()).toHaveLength(1);
+    expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='stop'").all()).toHaveLength(1);
     await second.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -545,18 +547,19 @@ describe("Catfolio engine, protection and recovery", () => {
 
 describe("coach approval in the running engine", () => {
   const coachFetch = (async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({
-    diagnosis: "Trend threshold blocked the recorded entries", rationale: "Try a one-point adjustment", tradeoff: "More false signals are possible",
-    change: { field: "minTrendScore", from: 3, to: 2 },
+    idea: "Confirmed momentum", rules: "Pick BREAKOUT_BTC when r1h_pct > 0 and to_trigger_pct <= 0. Pick WAIT otherwise.",
+    coins: "BTC", reason: "Compare momentum with the fixed trend gate.", quip: "DARK Wall-E, check your signals before flexing those claws.",
+    note: "Your cat needs evidence before enthusiasm. False breakouts can still lose money.",
   }) } }] }))) as typeof fetch;
   function seedHistory(db: Db) {
     for (let i = 0; i < 31; i++) db.raw.prepare(`INSERT INTO decisions(bee,ts,choice,menu_json,action_json,status,audit_json)
       SELECT bee,?,choice,menu_json,action_json,status,audit_json FROM decisions WHERE bee='tiger' ORDER BY id LIMIT 1`).run(NOW - 3600000 - i * 60000);
   }
-  it("hot-applies only an approved threshold and keeps normal position sizing and exits", async () => {
-    const h = await harness(async (ask) => answer(ask, ask.menu.LONG_BTC ? "LONG_BTC" : "WAIT"), {
+  it("hot-applies only approved rules and coins and keeps numeric gates, sizing and exits", async () => {
+    const h = await harness(async (ask) => answer(ask, ask.strategy.includes("Pick BREAKOUT_BTC when r1h_pct") && ask.menu.BREAKOUT_BTC ? "BREAKOUT_BTC" : "WAIT"), {
       cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
     });
-    h.s.intraday!.tiger.trend.score = 2;
+    h.s.intraday!.tiger.trend.score = 3;
     h.s.intraday!.mochi.trend.score = 2;
     await h.engine.tick(); seedHistory(h.db);
     expect(h.engine.bees.tiger.position).toBeNull();
@@ -565,15 +568,17 @@ describe("coach approval in the running engine", () => {
     expect(pending.status).toBe("pending");
     await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
     h.engine.coach.resolve(pending.id, "accept");
+    expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
+    expect(h.cfg.slots.tiger.coins).toEqual(["BTC"]);
     expect(h.engine.bees.tiger.position).toBeNull();
     await h.engine.tick(); expect(h.engine.bees.tiger.position).not.toBeNull();
-    expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(h.engine.bees.tiger.position!.entryPx * 0.99);
+    expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(99);
     expect(h.engine.bees.mochi.position).toBeNull();
     h.engine.coach.reset("tiger");
     expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
-    expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(h.engine.bees.tiger.position!.entryPx * 0.99);
+    expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(99);
   });
-  it("discards in-flight decisions when an approved threshold changes", async () => {
+  it("discards in-flight decisions when approved rules change", async () => {
     let slow = false;
     const releases: Array<() => void> = [];
     const h = await harness(async (ask) => slow ? new Promise((resolve) => releases.push(() => resolve(answer(ask)))) : answer(ask), {
@@ -589,5 +594,82 @@ describe("coach approval in the running engine", () => {
     releases.forEach((release) => release()); await pending;
     expect(h.db.raw.prepare("SELECT COUNT(*) AS n FROM decisions WHERE bee='tiger' AND vetoed_by='stale_model_response'").get()).toMatchObject({ n: 1 });
     expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
+  });
+});
+
+describe("restored source actions reach the executor", () => {
+  function pick(ask: DecisionAsk, choice: string) {
+    if (ask.menu.BREAKOUT_BTC || ask.menu.HOLD) return answer(ask, ask.menu.HOLD ? "HOLD" : "WAIT");
+    return answer(ask, choice);
+  }
+  it("opens a short and adds to the winner without resetting its stop, entry score or opening count", async () => {
+    let choice = "SHORT_BTC";
+    const cfg = loadConfig({MOCHI_COOLDOWN_MINUTES:"0"});
+    const h = await harness(async ask => pick(ask, choice), {cfg});
+    await h.engine.tick();
+    const before = structuredClone(h.engine.bees.mochi.position!);
+    expect(before.side).toBe("short");
+    expect(before.stopPx).toBeGreaterThan(before.entryPx);
+    h.s.mid=95;
+    Object.assign(h.v.tickers.get(h.s.instId)!,{mid:95,bid:94.995,ask:95.005});
+    choice="ADD_TO_WINNER";
+    await h.engine.protectiveTick(); // marks the winner; no autonomous add from this loop
+    expect(h.engine.bees.mochi.position!.contracts).toBe(before.contracts);
+    await h.engine.tick();
+    const after=h.engine.bees.mochi.position!;
+    expect(after.contracts).toBeGreaterThan(before.contracts);
+    expect(after.entryPx).toBeLessThan(before.entryPx);
+    expect(after.stopPx).toBe(before.stopPx);
+    expect(after.initialStopPx).toBe(before.initialStopPx);
+    expect(after.entryScore).toBe(before.entryScore);
+    expect(after.riskUsd).toBeGreaterThan(before.riskUsd);
+    expect(h.engine.bees.mochi.tradesToday).toBe(1);
+    expect(h.db.loadBee("mochi")!.position).toEqual(after);
+    expect(h.db.raw.prepare("SELECT purpose,side,reduce_only FROM orders WHERE bee='mochi' ORDER BY id").all()).toEqual([
+      {purpose:"open",side:"sell",reduce_only:0},{purpose:"add",side:"sell",reduce_only:0},
+    ]);
+  });
+  it("closes a long before opening the short side of a flip",async()=>{
+    let choice="LONG_BTC";
+    const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"})});
+    await h.engine.tick();
+    expect(h.engine.bees.mochi.position!.side).toBe("long");
+    choice="SHORT_BTC"; await h.engine.tick();
+    expect(h.engine.bees.mochi.position!.side).toBe("short");
+    expect(h.engine.bees.mochi.tradesToday).toBe(2);
+    expect(h.db.raw.prepare("SELECT purpose,side,reduce_only FROM orders WHERE bee='mochi' ORDER BY id").all()).toEqual([
+      {purpose:"open",side:"buy",reduce_only:0},{purpose:"switch_close",side:"sell",reduce_only:1},{purpose:"open",side:"sell",reduce_only:0},
+    ]);
+  });
+  it.each(["rejected","unknown","partial"] as const)("does not open the switch leg after a %s close",async outcome=>{
+    let choice="LONG_BTC";
+    const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"}),executor:sim=>({
+      kind:"sim",init:async()=>{},positions:async()=>null,fundingBills:async()=>null,feesFor:async()=>null,
+      market:async(id,req)=>req.reduceOnly
+        ? outcome === "partial" ? sim.market(id,{...req,contracts:Math.floor(req.contracts/2)})
+          : {ok:false,state:outcome,error:{code:"TEST",message:"close incomplete"}}
+        : sim.market(id,req),
+    })});
+    await h.engine.tick(); const original=h.engine.bees.mochi.position!.contracts;
+    choice="SHORT_BTC";await h.engine.tick();
+    expect(h.engine.bees.mochi.position!.side).toBe("long");
+    expect(h.engine.bees.mochi.tradesToday).toBe(1);
+    expect(h.db.raw.prepare("SELECT * FROM orders WHERE bee='mochi' AND reduce_only=0").all()).toHaveLength(1);
+    expect(h.engine.bees.mochi.position!.contracts).toBe(outcome==="partial" ? original-Math.floor(original/2) : original);
+  });
+  it("runs upstream flat forcing and rebalance in the decision loop, and suspends both on model failure",async()=>{
+    let unavailable=false;
+    const h=await harness(async ask=>ask.menu.BREAKOUT_BTC ? answer(ask,"WAIT") : unavailable
+      ? {ok:false,reason:"timeout",latencyMs:1}
+      : {...answer(ask,ask.menu.HOLD_WINNER ? "HOLD_WINNER":"LONG_BTC"),conviction:0});
+    await h.engine.tick();
+    expect(h.engine.bees.mochi.position).not.toBeNull();
+    expect(h.db.raw.prepare("SELECT forced_by FROM decisions WHERE bee='mochi' ORDER BY id DESC LIMIT 1").get()).toMatchObject({forced_by:"max_flat"});
+    h.engine.bees.mochi.position!.contracts=10;
+    unavailable=true;await h.engine.tick();
+    expect(h.engine.bees.mochi.position!.contracts).toBe(10);
+    unavailable=false;await h.engine.tick();
+    expect(h.engine.bees.mochi.position!.contracts).toBeGreaterThan(10);
+    expect(h.db.raw.prepare("SELECT forced_by FROM decisions WHERE bee='mochi' ORDER BY id DESC LIMIT 1").get()).toMatchObject({forced_by:"rebalance"});
   });
 });

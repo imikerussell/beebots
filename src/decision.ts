@@ -1,6 +1,6 @@
 import type { Menu } from "./bees/types.js";
-export const STRATEGY_VERSION = "catfolio-3-intraday";
-export const RUBRIC_VERSION = "signal-strength-1";
+export const STRATEGY_VERSION = "catfolio-4-upstream-restored";
+export const RUBRIC_VERSION = "upstream-style-conviction-1";
 export const CONVICTION = [
   "0: No confirmed setup; insufficient or conflicting evidence",
   "1: Weak setup; some confirmation but material conflicts",
