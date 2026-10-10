@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CatId, Decision, Profile, Snapshot } from "./types";
-import { DECISION_LIMIT, isDecision, mergeDecisions } from "./decisionFeed";
+import { DECISION_LIMIT, decisionKey, isDecision, mergeDecisions } from "./decisionFeed";
 export type Curve = Array<[number, number]>;
 export function useFeed() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [curves, setCurves] = useState<Partial<Record<CatId, Curve>>>({});
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [liveDecisionKeys, setLiveDecisionKeys] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [streamStatus, setStreamStatus] = useState<"connecting" | "live" | "reconnecting">("connecting");
   const [historyStatus, setHistoryStatus] = useState<"loading" | "loaded" | "unavailable">("loading");
@@ -61,7 +62,10 @@ export function useFeed() {
           if (!alive) return;
           lastStreamSignal = Date.now();
           setStreamStatus("live");
-          if (isDecision(d)) setDecisions((prev) => mergeDecisions(prev, [d]));
+          if (isDecision(d)) {
+            setDecisions((prev) => mergeDecisions(prev, [d]));
+            setLiveDecisionKeys((prev) => [...prev.filter((key) => key !== decisionKey(d)), decisionKey(d)].slice(-DECISION_LIMIT));
+          }
         } catch {
           /* malformed event */
         }
@@ -84,5 +88,5 @@ export function useFeed() {
       events.close();
     };
   }, [refresh]);
-  return { snap, profile, curves, decisions, connected, streamStatus, historyStatus, refresh };
+  return { snap, profile, curves, decisions, liveDecisionKeys, connected, streamStatus, historyStatus, refresh };
 }

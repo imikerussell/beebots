@@ -5,15 +5,14 @@ import { ModelIssue } from "./ModelIssue";
 import { DecisionStream } from "./DecisionStream";
 import { useState } from "react";
 import { MorningReport, type Report } from "./MorningReport";
-import { CAT_IDS, CatCard, catName, pct, usd } from "./CatCard";
+import { CAT_IDS, CatCard, catName, usd } from "./CatCard";
 import { useFeed } from "./useFeed";
 import type { CatId } from "./types";
 
 export function App() {
-  const { snap, profile, curves, decisions, connected, streamStatus, historyStatus, refresh } = useFeed();
+  const { snap, profile, curves, decisions, liveDecisionKeys, connected, streamStatus, historyStatus, refresh } = useFeed();
   const { trainerKey, restoring, unlockTrainer, lockTrainer } =
     useTrainerSession();
-  const [showSetup, setShowSetup] = useState(false);
   const [report, setReport] = useState<Report | string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const loadReport = async () => {
@@ -52,31 +51,37 @@ export function App() {
             <div className="brand-sub">SMALL PAWS. BIG CONVICTION.</div>
           </div>
         </div>
-        <div className="session-label">
-          <span className="eyebrow">
-            {snap?.closed ? "SESSION CLOSED" : "CURRENT SESSION"}
-          </span>
-          <span>
-            {snap
-              ? `Started ${new Date(snap.startedAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })} · ${new Date(snap.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : "Waiting for the engine"}
-          </span>
-        </div>
+        <section className="overview" aria-label="Portfolio overview">
+          <div>
+            <span className="eyebrow">Combined equity</span>
+            <strong>{snap ? usd(equity) : "—"}</strong>
+          </div>
+          <div>
+            <span className="eyebrow">Total P&L</span>
+            <strong className={pnl >= 0 ? "positive" : "negative"}>
+              {snap ? `${pnl >= 0 ? "+" : ""}${usd(pnl)}` : "—"}
+            </strong>
+          </div>
+          <div>
+            <span className="eyebrow">Fees paid</span>
+            <strong>{snap ? usd(fees) : "—"}</strong>
+          </div>
+          <div>
+            <span className="eyebrow">Decisions</span>
+            <strong>{snap ? totalDecisions.toLocaleString() : "—"}</strong>
+          </div>
+          <div>
+            <span className="eyebrow">Open positions</span>
+            <strong>
+              {snap ? snap.cats.filter((c) => c.position).length : "—"}
+              <small> / 2</small>
+            </strong>
+          </div>
+        </section>
         <div className="header-actions">
-          <span className={`connection ${connected ? "is-connected" : ""}`}>
-            <i />
-            {connected ? "Engine connected" : "Engine offline"}
-          </span>
           <span className={`mode ${snap?.mode === "LIVE" ? "danger" : ""}`}>
             {snap?.mode ? `${snap.mode} TRADING` : "NOT CONNECTED"}
           </span>
-          <button
-            aria-expanded={showSetup}
-            aria-controls="local-setup"
-            onClick={() => setShowSetup(!showSetup)}
-          >
-            Local setup
-          </button>
           <button
             className="report-button"
             disabled={reportLoading}
@@ -95,26 +100,6 @@ export function App() {
           />
         </div>
       </header>
-      {showSetup && (
-        <section className="notice" id="local-setup">
-          <h3>Local setup</h3>
-          <p>
-            Copy <code>.env.example</code> to <code>.env</code>, run{" "}
-            <code>pnpm run setup</code>, and edit the two local profiles. Load a
-            compatible Nimble decision GGUF into LM Studio and set its
-            identifier in <code>LM_STUDIO_MODEL</code>. Run{" "}
-            <code>pnpm local:check</code> before the experiment. LM Studio needs
-            no cloud key. To use Jev, set <code>DECISION_PROVIDER=jev</code> and{" "}
-            <code>TYPESAFE_API_KEY</code> in .env, then restart the engine. Jev
-            is a billed cloud API.
-          </p>
-          <p>
-            Keep LM Studio loaded and your computer awake.{" "}
-            <code>pnpm paper:stop</code> closes the paper run; Ctrl+C pauses the
-            engine with positions saved. See README for restart instructions.
-          </p>
-        </section>
-      )}
       {!connected && (
         <div className="notice danger" role="status">
           <span className="notice-icon">!</span>
@@ -134,46 +119,6 @@ export function App() {
             : "Closing run. Waiting for fresh quotes to exit remaining positions."}
         </div>
       )}
-      <section className="overview" aria-label="Portfolio overview">
-        <div className="overview-equity">
-          <span className="eyebrow">Combined equity</span>
-          <strong>{snap ? usd(equity) : "—"}</strong>
-          <span className="muted">
-            {snap
-              ? `${usd(snap.totalStartEquityUsd)} starting capital`
-              : "Two independent portfolios"}
-          </span>
-        </div>
-        <div>
-          <span className="eyebrow">Total P&L</span>
-          <strong className={pnl >= 0 ? "positive" : "negative"}>
-            {snap ? `${pnl >= 0 ? "+" : ""}${usd(pnl)}` : "—"}
-          </strong>
-          <span className="muted">
-            {snap && snap.totalStartEquityUsd > 0
-              ? `${pct((pnl / snap.totalStartEquityUsd) * 100)} all time`
-              : "Since allocation"}
-          </span>
-        </div>
-        <div>
-          <span className="eyebrow">Fees paid</span>
-          <strong>{snap ? usd(fees) : "—"}</strong>
-          <span className="muted">Across both personas</span>
-        </div>
-        <div>
-          <span className="eyebrow">Decisions</span>
-          <strong>{snap ? totalDecisions.toLocaleString() : "—"}</strong>
-          <span className="muted">Every call recorded</span>
-        </div>
-        <div>
-          <span className="eyebrow">Open positions</span>
-          <strong>
-            {snap ? snap.cats.filter((c) => c.position).length : "—"}
-            <small> / 2</small>
-          </strong>
-          <span className="muted">One position per persona</span>
-        </div>
-      </section>
       <div className="desk-heading">
         <span className="eyebrow">
           ONE WALL-E. TWO PERSONAS. <span>/</span> 02
@@ -206,20 +151,25 @@ export function App() {
           ))}
         </section>
         <aside className="sidebar">
+          <DecisionStream liveDecisionKeys={liveDecisionKeys} decisions={decisions} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={snap?.decisionIntervalMs} closed={!!snap?.closed} />
           <section className="model-panel">
             <div className="section-title">
               <span className="eyebrow">THE BRAIN</span>
               <span
-                className={`model-status ${snap?.inference.connected ? "positive" : "muted"}`}
+                className={`model-status ${connected && snap?.inference.connected ? "positive" : "muted"}`}
               >
                 <i
-                  className={`light ${snap?.inference.connected ? "on" : ""}`}
+                  className={`light ${connected && snap?.inference.connected ? "on" : ""}`}
                 />
-                {snap?.inference.error
+                {!connected
+                  ? "Status unknown"
+                  : snap?.inference.error
                   ? "Decision issue"
                   : snap?.inference.connected
                     ? "Connected"
-                    : "Unavailable"}
+                    : snap?.inference.requests === 0
+                      ? "Not called yet"
+                      : "Awaiting response"}
               </span>
             </div>
             <h3>{snap?.inference.provider ?? "Decision engine"}</h3>
@@ -246,6 +196,9 @@ export function App() {
                 </dd>
               </div>
             </dl>
+            {connected && snap && !snap.inference.error && !snap.inference.connected && snap.inference.requests === 0 && (
+              <p className="model-idle">No model request has been made since this engine started. When WAIT or HOLD is the only available action, the rules handle it without calling the model. Connectivity has not been tested yet.</p>
+            )}
             {snap?.inference.error && (
               <ModelIssue
                 error={snap.inference.error}
@@ -282,7 +235,7 @@ export function App() {
               </b>
             </div>
           </section>
-          <DecisionStream decisions={decisions} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={snap?.decisionIntervalMs} closed={!!snap?.closed} />
+
         </aside>
       </div>
       {report !== null && (
