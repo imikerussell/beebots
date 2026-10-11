@@ -105,6 +105,10 @@ export interface EntryDiagnostic {
   trendScore?: number | null;
   minTrendScore?: number | null;
   momentumPct?: number | null;
+  minMomentumPct?: number | null;
+  macdHistPct?: number | null;
+  signalSide?: "long" | "short" | null;
+  atrPct?: number | null;
   momentumMinutes?: number;
   stopDistancePct?: number | null;
   roundTripCostPct?: number | null;
@@ -128,6 +132,10 @@ export interface EntryDiagnostic {
 export type CoachField = "minTrendScore" | "minActionProbability" | "minConviction";
 export interface TrainerReview { idea: string; rules: string; coins: string; reason: string; quip: string; note: string }
 export interface CoachRules { rules: string; coins: string[] }
+export interface CoachContext {
+  diagnostics?: EntryDiagnostic[];
+  account?: { pnlUsd: number; pnlPct: number; tradesToday: number; maxTradesPerDay: number; position: { coin: string; side: string } | null };
+}
 export interface CoachEntry {
   id: number; cat: CatId; day: string; createdAt: number; expiresAt: number;
   status: "reviewing" | "pending" | "accepted" | "declined" | "no_change" | "failed" | "expired" | "rolled_back";
@@ -135,13 +143,14 @@ export interface CoachEntry {
   completedAt: number | null; resolvedAt: number | null; error: string | null;
   review: { diagnosis: string; rationale: string; tradeoff: string;
     change: { field: CoachField; from: number; to: number } | null } | TrainerReview | null;
-  evidence: { summary: { decisions: number; waits: number; holds: number; modelFailures: number };
+  evidence: { current?: CoachContext; entries?: { count: number }; summary: { decisions: number; waitOnly?: number; waits: number; holds: number; modelFailures: number };
     blockers: Array<{ reason: string; decisions: number }> };
 }
 export interface CoachState {
+  automatic?: boolean; reviewIntervalMs?: number;
   enabled: boolean; canReview: boolean; model: string; message: string; approvalMessage: string | null;
   checkedAt: number | null; checkIntervalMs: number;
-  cats: Array<{ cat: CatId; current: CoachRules | Record<CoachField, number>; baseline: CoachRules | Record<CoachField, number>; activeReviewId: number | null; nextReviewAt: number | null;
+  cats: Array<{ cat: CatId; context?: CoachContext; current: CoachRules | Record<CoachField, number>; baseline: CoachRules | Record<CoachField, number>; activeReviewId: number | null; nextReviewAt: number | null;
     phase: "paused" | "reviewing" | "awaiting_approval" | "scheduled" | "queued" | "gathering";
     observations: number; requiredObservations: number; observedMinutes: number; requiredMinutes: number;
     lastReviewAt: number | null; reviewCount: number; acceptedCount: number;

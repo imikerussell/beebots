@@ -45,16 +45,59 @@ describe("source strategy parity through the cat adapter", () => {
     h.s.trend!.rv90Pct = 200;
     expect(h.brain.menu(h.ctx).LONG_BTC!.intent).toMatchObject({sizeFrac:60/200/1.94});
   });
-  it("restores the actual daily Bizzy breakout with no replacement-engine prefilters", () => {
+  it("offers long and short momentum without requiring a daily breakout", () => {
     const h = riskFixture();
-    h.s.intraday = undefined; h.s.trend = undefined; h.s.fundingPct = null; h.s.ret1hPct = -1;
-    expect(h.brain.menu(h.ctx).BREAKOUT_BTC).toBeDefined();
-    expect(h.brain.stopFor(h.s.instId,"long",100,h.ctx)).toBe(99);
-    h.s.mid = 99.9;
+    h.s.breakout = null; h.s.intraday = undefined; h.s.trend = undefined;
+    expect(h.brain.menu(h.ctx).LONG_BTC).toBeDefined();
+    expect(h.brain.stopFor(h.s.instId,"long",100,h.ctx)).toBe(99.25);
+    h.s.ret1hPct = -1; h.s.macdHistPct = -0.2;
+    expect(h.brain.menu(h.ctx).SHORT_BTC?.intent).toMatchObject({kind:"open",side:"short"});
+    expect(h.brain.menu(h.ctx).LONG_BTC).toBeUndefined();
+    expect(h.brain.stopFor(h.s.instId,"short",100,h.ctx)).toBe(100.75);
+    h.s.ret1hPct = 0;
     expect(h.brain.menu(h.ctx)).toEqual({});
     expect(h.brain.forcedEntry(h.ctx)).toBeNull();
-    h.b.position = position(h.s,{stopPx:98,openedAt:NOW});
-    expect(h.brain.timeStopMinutes!(h.ctx)).toBe(719);
+    expect(h.brain.timeStopMinutes!(h.ctx)).toBe(120);
+  });
+  it("offers both directions across the expanded universe with a 12-entry daily budget", () => {
+    const h = riskFixture();
+    expect(h.cfg.slots.tiger.coins).toHaveLength(12);
+    for (const name of h.cfg.slots.tiger.coins) {
+      const s = coin(name, {ret1hPct:1,macdHistPct:0.2});
+      h.ctx.view = view([s]);
+      expect(h.brain.menu(h.ctx)[`LONG_${name}`]?.intent).toMatchObject({kind:"open",side:"long",instId:s.instId});
+      s.ret1hPct = -1; s.macdHistPct = -0.2;
+      expect(h.brain.menu(h.ctx)[`SHORT_${name}`]?.intent).toMatchObject({kind:"open",side:"short",instId:s.instId});
+      expect(h.brain.forcedEntry(h.ctx)).toBeNull();
+    }
+    expect(h.cfg.cats.tiger.maxTradesPerDay).toBe(12);
+    expect(h.cfg.cats.tiger.cooldownMinutes).toBe(5);
+    expect(h.cfg.cats.tiger.longOnly).toBe(false);
+  });
+  it("rejects small/conflicting moves, missing ATR, stale data and illiquid or wide markets", () => {
+    for (const patch of [{ret1hPct:0.1},{ret1hPct:-1},{macdHistPct:-0.2},{atr14Pct:null},{atr14Pct:NaN},{ret1hPct:NaN},{refreshedAt:NOW-240000},{vol24hUsd:100},{spreadBp:20}]) {
+      const h = riskFixture(); Object.assign(h.s, patch);
+      expect(h.brain.menu(h.ctx), JSON.stringify(patch)).toEqual({});
+    }
+  });
+  it("lets a held position close in profit or loss and reverse on a qualifying opposite signal", () => {
+    const h = riskFixture(); h.b.position = position(h.s,{stopPx:90});
+    for (const profit of [-1,1]) {
+      h.b.uplUsd = profit;
+      expect(h.brain.menu(h.ctx).CLOSE?.intent).toMatchObject({kind:"close"});
+    }
+    h.s.ret1hPct = -1; h.s.macdHistPct = -0.2;
+    expect(h.brain.menu(h.ctx).FLIP_SHORT?.intent).toMatchObject({kind:"switch",side:"short"});
+    h.cfg.slots.tiger.coins = ["ETH"];
+    const restricted = catBrain("tiger",h.cfg);
+    expect(restricted.menu(h.ctx).CLOSE).toBeDefined();
+    expect(restricted.menu(h.ctx).FLIP_SHORT).toBeUndefined();
+  });
+  it("only starts trailing after +1R and mirrors the short stop", () => {
+    const h = riskFixture(); h.b.position = position(h.s,{side:"short",stopPx:110});
+    h.ctx.uplR = 0.5; expect(h.brain.trail!(h.ctx)).toBeNull();
+    h.ctx.uplR = 1.1; expect(h.brain.trail!(h.ctx)).toBe(100.75);
+    h.s.refreshedAt = NOW - 240000; expect(h.brain.trail!(h.ctx)).toBeNull();
   });
   it("coach coin filtering restricts new exposure while retaining held-coin exits", () => {
     const h = riskFixture("mochi");

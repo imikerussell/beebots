@@ -24,6 +24,8 @@ export function entryExplanations(c: EntryDiagnostic): string[] {
   }
   return c.blockers.map(reason => {
     switch (reason) {
+      case "missing_momentum_data": return "Waiting for a usable one-hour return and 15-minute MACD.";
+      case "momentum_not_confirmed": return `One-hour move ${pct(c.momentumPct)} needs magnitude >= ${pct(c.minMomentumPct)} with matching MACD direction (${number(c.macdHistPct, 4)}%). Either long or short can qualify.`;
       case "missing_breakout_levels": return "Waiting for today's open and the complete previous day's range.";
       case "breakout_not_reached": return `Price $${number(c.mid)} has not reached breakout trigger $${number(c.breakoutTrigger)}.`;
       case "missing_trend_data": return "Waiting for Donchian trend candle history.";

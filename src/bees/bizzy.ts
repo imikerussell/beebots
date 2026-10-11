@@ -38,7 +38,7 @@ export function stretchedFades(stats: CoinStats[], n: number): FadeSetup[] {
 }
 
 /** The breakout coins, in order of preference when several trigger on the same tick. */
-export const BIZZY_BREAKOUT_COINS = ["BTC", "ETH", "SOL", "HYPE"] as const;
+export const BIZZY_BREAKOUT_COINS = ["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE", "ADA", "LINK", "AVAX", "SUI", "LTC", "BCH"] as const;
 
 function breakoutStats(ctx: BeeContext): CoinStats[] {
   const byCoin = new Map([...ctx.view.stats.values()].map((s) => [s.coin, s]));
@@ -53,7 +53,7 @@ const nextUtcMidnight = (ms: number) => (Math.floor(ms / 86_400_000) + 1) * 86_4
 export const bizzy: BeeBrain = {
   id: "bizzy",
   strategy:
-    "You are bizzy-bee, the grinder, now a one-shot breakout hunter. Each UTC day you get ONE trade: when BTC, ETH, SOL or HYPE breaks above today's open plus half of yesterday's range, you may go long at full size and ride it to the end of the day. Only take a breakout that looks real. While holding, HOLD unless it is clearly failing.",
+    "You are bizzy-bee, the grinder, now a one-shot breakout hunter. Each UTC day you get ONE trade: when an allowed coin breaks above today's open plus half of yesterday's range, you may go long at full size and ride it to the end of the day. Only take a breakout that looks real. While holding, HOLD unless it is clearly failing.",
   convictionLabels: ["meh", "decent", "juicy", "screaming"],
   neverForce: true,
   // Ride to the UTC day close (1 minute before midnight).

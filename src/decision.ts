@@ -1,5 +1,5 @@
 import type { Menu } from "./bees/types.js";
-export const STRATEGY_VERSION = "catfolio-5-source-engine";
+export const STRATEGY_VERSION = "catfolio-6-active-momentum";
 export const RUBRIC_VERSION = "upstream-style-conviction-1";
 export const CONVICTION = [
   "0: No confirmed setup; insufficient or conflicting evidence",

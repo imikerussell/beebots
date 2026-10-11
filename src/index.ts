@@ -48,7 +48,7 @@ async function main() {
         cfg.cats.mochi.spreadGateBps,
       ),
       trendCoins: ["BTC", "ETH"],
-      allowedCoins: ["BTC", "ETH", "SOL", "HYPE"],
+      allowedCoins: [...new Set(BEES.flatMap(id => cfg.slots[id].coins))],
     },
     null,
     () =>

@@ -22,12 +22,13 @@ describe("entry diagnostics", () => {
     expect(explanations.join(" ")).not.toContain("Volatility filter");
   });
 
-  it("reports the actual source breakout without the removed cost or momentum gates", () => {
-    const h = riskFixture(); h.s.mid = 99.5;
+  it("reports the active symmetric momentum threshold without using the daily breakout", () => {
+    const h = riskFixture(); h.s.mid = 99.5; h.s.ret1hPct = 0.05;
     h.s.intraday!.tiger.atrPct = 0.0001; h.s.intraday!.tiger.momentumPct = -1;
     const d = entryDiagnostics("tiger", h.ctx)[0]!;
-    expect(d.blockers).toEqual(["breakout_not_reached"]);
-    expect(entryExplanations(d).join(" ")).toContain("$99.50 has not reached breakout trigger $100.00");
+    expect(d.blockers).toEqual(["momentum_not_confirmed"]);
+    expect(entryExplanations(d).join(" ")).toContain("needs magnitude >= 0.125%");
+    expect(d.breakoutTrigger).toBeNull();
     expect(d).not.toHaveProperty("minStopDistancePct");
   });
   it("does not reinterpret historical stale decisions as current failed market conditions", () => {

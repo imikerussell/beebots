@@ -1,5 +1,5 @@
 import type { StyleId } from "../settings.js";
-import { bizzy } from "./bizzy.js";
+import { activeBizzy as bizzy } from "./active-bizzy.js";
 import { boozy } from "./boozy.js";
 import { breezy } from "./breezy.js";
 import type { BeeBrain } from "./types.js";

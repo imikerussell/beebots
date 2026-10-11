@@ -1,3 +1,5 @@
+import { ACTIVE_MAX_HOLD_MINUTES } from "./bees/active-bizzy.js";
+import { BIZZY_BREAKOUT_COINS } from "./bees/bizzy.js";
 import { STYLES, type Settings, type StyleId } from "./settings.js";
 export { STYLES, type StyleId };
 export const CATS = ["tiger", "mochi"] as const;
@@ -201,7 +203,7 @@ export function loadConfig(
       ),
       maxTradesPerDay: num(
         `${p}_MAX_ENTRIES_PER_DAY`,
-        tiger ? 1 : 3,
+        tiger ? 12 : 3,
         0,
         1000,
         true,
@@ -209,7 +211,7 @@ export function loadConfig(
       cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? 5 : 240, 0),
       spreadGateBps: num(`${p}_SPREAD_GATE_BPS`, 5, 0.01, 100),
       minVolumeUsd: num(`${p}_MIN_24H_VOLUME_USD`, 1e6, 0),
-      feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, 1, 0),
+      feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, tiger ? 3 : 1, 0),
       minActionProbability: num(
         `${p}_MIN_ACTION_PROBABILITY`,
         tiger ? 0.55 : 0.7,
@@ -219,7 +221,7 @@ export function loadConfig(
       minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3, true),
       minTrendScore: num(`${p}_MIN_TREND_SCORE`, tiger ? 3 : 4, 1, 9, true),
       stopAtrMult: num(`${p}_STOP_ATR_MULT`, tiger ? 1.5 : 2, 0.1, 20),
-      longOnly: tiger,
+      longOnly: false,
       maxFlatMinutes: num(`${p}_MAX_FLAT_MINUTES`, tiger ? 20 : 0, 0),
     };
     const saved = settings?.cats[i];
@@ -230,13 +232,13 @@ export function loadConfig(
     slots[id] = {
       name: str(`${p}_NAME`, saved?.name ?? (tiger ? "DARK Wall-E" : "Good Wall-E")),
       style: tiger ? "bizzy" : "breezy",
-      tagline: tiger ? "Bizzy volatility breakout" : "Breezy long/short trend",
+      tagline: tiger ? "Active long/short momentum" : "Breezy long/short trend",
       rules:
         migrateStrategyRules(saved?.rules) ??
         (tiger
-          ? "Take convincing BREAKOUT entries and ride them to the day close. CUT_LOSS when the breakout is failing."
+          ? "Take convincing LONG or SHORT momentum entries without waiting for a daily breakout. HOLD a continuing move, CLOSE when it weakens, and FLIP when the opposite signal is convincing. WAIT when no offered trade is convincing."
           : "Follow the stronger directional trend. Ride winners and add above +1R. Trim weakening trends or switch when the other direction or coin is stronger."),
-      coins: tiger ? ["BTC", "ETH", "SOL", "HYPE"] : ["BTC", "ETH"],
+      coins: tiger ? [...BIZZY_BREAKOUT_COINS] : ["BTC", "ETH"],
       customImage: false,
       fromSetup: !!saved,
     };
@@ -284,7 +286,7 @@ export function loadConfig(
       tiger: {
         maxChaseRangeFrac: num("TIGER_MAX_CHASE_RANGE_FRAC", 0.25, 0, 2),
         maxFundingPct: num("TIGER_MAX_FUNDING_PCT", 0.03, 0, 1),
-        maxHoldMinutes: num("TIGER_MAX_HOLD_MINUTES", 120, 5, 1440),
+        maxHoldMinutes: num("TIGER_MAX_HOLD_MINUTES", ACTIVE_MAX_HOLD_MINUTES, 5, 1440),
       },
       mochi: {
         volTargetPct: num("MOCHI_VOL_TARGET_PCT", 25, 0.1, 100),
@@ -365,6 +367,7 @@ export function loadConfig(
 /** Replace only the shipped replacement-engine defaults, never arbitrary owner rules. */
 function migrateStrategyRules(rules: string | undefined): string | undefined {
   const obsolete = [
+    "Take convincing BREAKOUT entries and ride them to the day close. CUT_LOSS when the breakout is failing.",
     "Trade a confirmed daily volatility breakout, avoid chasing, and close before UTC midnight. WAIT is valid.",
     "Follow the nine-channel 4h Donchian ensemble with volatility sizing and channel trailing stops. Keep cash without a strong trend.",
     "Trade confirmed five-minute breakouts with a supportive fifteen-minute trend. Avoid chasing; exit within two hours. WAIT is valid.",

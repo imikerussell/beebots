@@ -7,7 +7,7 @@ import type { Db } from "./db.js";
 import { redactString } from "./redact.js";
 
 const DAY = 86_400_000;
-export const COACH_INTERVAL_MS = 20 * 3_600_000;
+export const COACH_INTERVAL_MS = 4 * 3_600_000;
 const MIN_OBSERVATIONS = 30;
 const MIN_OBSERVATION_MS = 3_600_000;
 export const COACH_ERRORS: Record<string, string> = {
@@ -78,7 +78,7 @@ export interface CoachDeps {
   fetch?: typeof fetch;
 }
 
-/** Durable, owner-approved overlays. AI output never reaches configuration before validation + approval. */
+/** Durable automatic overlays, applied only after schema, universe and revision validation. */
 export class CatCoach {
   private now: () => number;
   private fetcher: typeof fetch;
@@ -112,15 +112,21 @@ export class CatCoach {
     // Old threshold proposals remain history, but can no longer mutate the engine.
     d.db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE status='pending' AND json_extract(review,'$.rules') IS NULL").run(this.now());
     d.db.raw.prepare("UPDATE coach_reviews SET status='failed', completed_at=?, resolved_at=?, error_code='engine_restarted' WHERE status='reviewing'").run(this.now(), this.now());
-    // The restored source engine must not inherit replacement-engine threshold/rule overlays.
-    // Preserve review history, but retire overlays once at this explicit strategy-version boundary.
-    if (d.db.getMeta("coach_strategy_version") !== STRATEGY_VERSION) {
+    // Retire incompatible overlays, preserving Good Wall-E when only Dark's strategy changes.
+    const previousStrategy = d.db.getMeta("coach_strategy_version");
+    if (previousStrategy !== STRATEGY_VERSION) {
+      const scope = previousStrategy === "catfolio-5-source-engine" ? " WHERE cat='tiger'" : "";
       d.db.transaction(() => {
-        d.db.raw.prepare("UPDATE coach_reviews SET status='rolled_back',resolved_at=? WHERE id IN (SELECT review_id FROM coach_rule_overrides UNION SELECT review_id FROM coach_overrides)").run(this.now());
+        d.db.raw.prepare(`UPDATE coach_reviews SET status='rolled_back',resolved_at=? WHERE id IN (SELECT review_id FROM coach_rule_overrides${scope} UNION SELECT review_id FROM coach_overrides${scope})`).run(this.now());
         d.db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE status='pending'").run(this.now());
-        d.db.raw.exec("DELETE FROM coach_overrides; DELETE FROM coach_rule_overrides;");
+        d.db.raw.exec(`DELETE FROM coach_overrides${scope}; DELETE FROM coach_rule_overrides${scope};`);
         d.db.setMeta("coach_strategy_version", STRATEGY_VERSION);
       });
+    }
+    // Manual-era proposals are historical suggestions, not automatic authorizations.
+    if (d.db.getMeta("coach_automation_version") !== "1") {
+      d.db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE status='pending'").run(this.now());
+      d.db.setMeta("coach_automation_version", "1");
     }
     for (const cat of CATS) {
       const row = d.db.raw.prepare("SELECT values_json,baseline_json FROM coach_rule_overrides WHERE cat=?").get(cat) as { values_json: string; baseline_json: string } | undefined;
@@ -149,8 +155,9 @@ export class CatCoach {
       enabled, canReview: !!cfg.coach.adminToken && !this.d.closed(), model: cfg.coach.model,
       message: this.d.closed() ? "Experiment closed; coaching paused." : !cfg.coach.enabled ? "Coach is off. Enable COACH_ENABLED and configure AI_GATEWAY_API_KEY on the engine."
         : !cfg.coach.apiKey ? "Set AI_GATEWAY_API_KEY on the engine to enable trainer reviews."
-        : "One rules-and-coins review per cat every 20 hours, after at least one hour and 30 decisions. Changes require owner approval.",
-      approvalMessage: !cfg.coach.adminToken ? "Set COACH_ADMIN_TOKEN on the engine to enable owner approval." : null,
+        : "Automatic rules-and-coins reviews every 4 hours per cat, after at least one hour and 30 observations. Validated changes apply immediately.",
+      approvalMessage: null,
+      automatic: true, reviewIntervalMs: COACH_INTERVAL_MS,
       checkedAt: this.lastCheckAt,
       checkIntervalMs: 60_000,
       cats: CATS.map((cat) => {
@@ -161,7 +168,7 @@ export class CatCoach {
           : readiness.cooldownUntil !== null && readiness.cooldownUntil > this.now() ? "scheduled"
           : readiness.ready ? "queued" : "gathering";
         const counts = db.raw.prepare("SELECT COUNT(*) AS reviews, SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END) AS accepted FROM coach_reviews WHERE cat=?").get(cat) as { reviews: number; accepted: number | null };
-        return { cat, current: coachValues(cfg, cat), baseline: this.baseline[cat],
+        return { cat, current: coachValues(cfg, cat), baseline: this.baseline[cat], context: this.d.context(cat),
           activeReviewId: (db.raw.prepare("SELECT review_id FROM coach_rule_overrides WHERE cat=?").get(cat) as { review_id: number } | undefined)?.review_id ?? null,
           nextReviewAt: readiness.earliestReviewAt, phase,
           observations: readiness.decisions, requiredObservations: MIN_OBSERVATIONS,
@@ -176,7 +183,7 @@ export class CatCoach {
   /** The dashboard and scheduler share evidence and rolling cooldown checks. */
   private readiness(cat: BeeId, now: number, last?: Row) {
     const summary = this.d.db.raw.prepare(`SELECT COUNT(*) AS decisions, MIN(ts) AS firstAt
-      FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND json_extract(audit_json,'$.source')='model_request'`)
+      FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND json_extract(audit_json,'$.source') IN ('model_request','rules')`)
       .get(cat, now - DAY, now) as { decisions: number; firstAt: number | null };
     const observedMs = summary.firstAt === null ? 0 : Math.max(0, now - summary.firstAt);
     const accepted = this.d.db.raw.prepare("SELECT MAX(resolved_at) AS at FROM coach_reviews WHERE cat=? AND status IN ('accepted','rolled_back')").get(cat) as { at: number | null };
@@ -189,21 +196,21 @@ export class CatCoach {
   private evidence(cat: BeeId, now: number) {
     const db = this.d.db.raw, since = now - DAY;
     const summary = db.prepare(`SELECT COUNT(*) AS decisions, MIN(ts) AS firstAt,
-      SUM(CASE WHEN choice='WAIT' THEN 1 ELSE 0 END) AS waits,
+      SUM(CASE WHEN choice='WAIT' OR (choice IS NULL AND (SELECT COUNT(*) FROM json_each(menu_json))=0) THEN 1 ELSE 0 END) AS waits,
       SUM(CASE WHEN choice IN ('HOLD','HOLD_WINNER') THEN 1 ELSE 0 END) AS holds,
-      SUM(CASE WHEN choice='WAIT' AND (SELECT COUNT(*) FROM json_each(menu_json))=1 THEN 1 ELSE 0 END) AS waitOnly,
+      SUM(CASE WHEN (choice='WAIT' AND (SELECT COUNT(*) FROM json_each(menu_json))=1) OR (choice IS NULL AND (SELECT COUNT(*) FROM json_each(menu_json))=0) THEN 1 ELSE 0 END) AS waitOnly,
       SUM(CASE WHEN (vetoed_by='weak_or_invalid_conviction' OR vetoed_by LIKE 'weak_conviction %') AND conviction<COALESCE(json_extract(audit_json,'$.config.openGate.minConviction'),json_extract(audit_json,'$.config.limits.minConviction')) THEN 1 ELSE 0 END) AS weakConviction,
       SUM(CASE WHEN (vetoed_by='weak_or_invalid_conviction' OR vetoed_by LIKE 'weak_conviction %') AND json_extract(probabilities_json,'$.' || choice)<COALESCE(json_extract(audit_json,'$.config.openGate.minProb'),json_extract(audit_json,'$.config.limits.minActionProbability')) THEN 1 ELSE 0 END) AS weakProbability,
       SUM(CASE WHEN jev_error IS NOT NULL THEN 1 ELSE 0 END) AS modelFailures
-      FROM decisions WHERE bee=? AND ts>=? AND json_extract(audit_json,'$.source')='model_request'`).get(cat, since) as { decisions: number; firstAt: number | null; waits: number; holds: number; waitOnly: number; weakConviction: number; weakProbability: number; modelFailures: number };
+      FROM decisions WHERE bee=? AND ts>=? AND json_extract(audit_json,'$.source') IN ('model_request','rules')`).get(cat, since) as { decisions: number; firstAt: number | null; waits: number; holds: number; waitOnly: number; weakConviction: number; weakProbability: number; modelFailures: number };
     const outcomes = db.prepare(`SELECT status, vetoed_by AS veto, COUNT(*) AS count FROM decisions WHERE bee=? AND ts>=? GROUP BY status,vetoed_by ORDER BY count DESC LIMIT 30`).all(cat, since);
     const blockers = db.prepare(`SELECT b.value AS reason, COUNT(DISTINCT d.id) AS decisions
       FROM decisions d, json_each(d.audit_json,'$.entryDiagnostics') c, json_each(c.value,'$.blockers') b
-      WHERE d.bee=? AND d.ts>=? AND json_extract(d.audit_json,'$.source')='model_request'
+      WHERE d.bee=? AND d.ts>=? AND json_extract(d.audit_json,'$.source') IN ('model_request','rules')
       GROUP BY b.value ORDER BY decisions DESC`).all(cat, since);
     const recent = db.prepare(`SELECT ts, choice, status, vetoed_by AS veto, conviction,
       json_extract(audit_json,'$.entryDiagnostics') AS diagnostics
-      FROM decisions WHERE bee=? AND ts>=? AND json_extract(audit_json,'$.source')='model_request' ORDER BY id DESC LIMIT 12`).all(cat, since);
+      FROM decisions WHERE bee=? AND ts>=? AND json_extract(audit_json,'$.source') IN ('model_request','rules') ORDER BY id DESC LIMIT 12`).all(cat, since);
     const entries = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE bee=? AND ts>=? AND purpose='open' AND state='filled'").get(cat, since);
     return { since, until: now, summary, outcomes, blockers, recent, entries, current: this.d.context(cat) };
   }
@@ -255,10 +262,17 @@ export class CatCoach {
         for (const key of ["idea", "rules", "coins", "reason", "quip", "note"] as const) review[key] = redactString(review[key]);
         CoachAnswer.parse(review);
         stage = "change";
-        this.validate(cat, review);
+        const values = this.validate(cat, review);
+        const current = coachValues(cfg, cat);
+        const unchanged = this.sameRules(values.rules, current.rules) && JSON.stringify(values.coins) === JSON.stringify(current.coins);
         const status = this.stopped || this.d.closed() || revision !== coachRevision(cfg, cat) || this.now() >= now + DAY
-          ? "expired" : "pending";
-        db.raw.prepare("UPDATE coach_reviews SET status=?,review=?,completed_at=? WHERE id=?").run(status, JSON.stringify(review), this.now(), id);
+          ? "expired" : unchanged ? "no_change" : "accepted";
+        db.transaction(() => {
+          db.raw.prepare("UPDATE coach_reviews SET status=?,review=?,completed_at=?,resolved_at=? WHERE id=?")
+            .run(status, JSON.stringify(review), this.now(), this.now(), id);
+          if (status === "accepted") this.saveOverride(cat, id, values);
+        });
+        if (status === "accepted") { Object.assign(cfg.slots[cat], values); this.d.changed(cat); }
       } catch (err) {
         // Map errors to a fixed vocabulary; never retain a provider body or credential-bearing message.
         const code = err instanceof CoachReviewError ? err.message
@@ -274,10 +288,13 @@ export class CatCoach {
     const coins = review.coins ? review.coins.split(",").map(c => c.trim()) : [...allowed];
     if (new Set(coins).size !== coins.length || coins.some(c => !allowed.includes(c)))
       throw new CoachConflict("The proposed coin list is outside this cat's allowed universe.");
-    if (review.rules.replace(/\s+/g, " ").toLowerCase() === this.d.cfg.slots[cat].rules.replace(/\s+/g, " ").toLowerCase())
-      throw new CoachConflict("The trainer must propose different rules.");
     if (!review.quip.includes(displayName(this.d.cfg, cat))) throw new CoachConflict("The quip must use the cat's display name.");
     return { rules: review.rules, coins: allowed.filter(c => coins.includes(c)) };
+  }
+  private sameRules(a: string, b: string) { return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim(); }
+  private saveOverride(cat: BeeId, id: number, values: Values) {
+    this.d.db.raw.prepare("INSERT INTO coach_rule_overrides(cat,review_id,values_json,baseline_json) VALUES(?,?,?,?) ON CONFLICT(cat) DO UPDATE SET review_id=excluded.review_id,values_json=excluded.values_json,baseline_json=excluded.baseline_json")
+      .run(cat, id, JSON.stringify(values), JSON.stringify(this.baseline[cat]));
   }
   resolve(id: number, action: "accept" | "decline") {
     this.expire();
@@ -290,7 +307,7 @@ export class CatCoach {
       if (row.revision !== coachRevision(cfg, row.cat)) throw new CoachConflict("Settings changed since this review; wait for the next review.");
       this.validate(row.cat, review);
       const previous = db.raw.prepare("SELECT MAX(resolved_at) AS at FROM coach_reviews WHERE cat=? AND status IN ('accepted','rolled_back')").get(row.cat) as { at: number | null };
-      if (previous.at !== null && this.now() < previous.at + COACH_INTERVAL_MS) throw new CoachConflict("Wait 20 hours between approved trainer changes.");
+      if (previous.at !== null && this.now() < previous.at + COACH_INTERVAL_MS) throw new CoachConflict("Wait 4 hours between trainer changes.");
     }
     const values = action === "accept" ? this.validate(row.cat, review) : coachValues(cfg, row.cat);
     db.transaction(() => {

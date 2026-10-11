@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { EquityChart } from "./EquityChart";
 import type { Cat, CatId, Profile, Snapshot } from "./types";
 import type { Curve } from "./useFeed";
@@ -18,7 +17,7 @@ export const CAT_META = {
     persona: "DARK",
     img: "/cats/wall-e-dark.png",
     style: "The bolder side",
-    coins: ["BTC", "ETH", "SOL"],
+    coins: [],
     color: "#ffb443",
     number: "01",
   },
@@ -45,19 +44,16 @@ export function CatCard({
   meta,
   curve,
   snap,
-  coaching,
 }: {
   id: CatId;
   cat?: Cat;
   meta?: Profile["cats"][number];
   curve?: Curve;
   snap: Snapshot | null;
-  coaching?: ReactNode;
 }) {
   const identity = CAT_META[id];
   const name = catName(id, cat?.name ?? meta?.name);
-  const trainerEntry = snap?.coach?.entries.find(e => e.cat === id && e.review && "quip" in e.review && ["pending", "accepted"].includes(e.status));
-  const trainerReview = trainerEntry?.review;
+
   const metrics = cat
     ? [
         ["Realized P&L", usd(cat.totals.realisedUsd)],
@@ -110,11 +106,10 @@ export function CatCard({
           </div>
         </div>
         <span className="strategy-tag">
-          {id === "tiger" ? "↗ DAILY BREAKOUT" : "≈ TREND FOLLOWING"}
+          {id === "tiger" ? "↕ ACTIVE LONG / SHORT" : "≈ TREND FOLLOWING"}
         </span>
       </div>
       <div className="cat-body">
-        {trainerReview && "quip" in trainerReview && <div className="trainer-quip"><p><b>Trainer{trainerEntry?.status === "pending" ? " suggestion" : ""}:</b> {trainerReview.quip}</p><p>{trainerReview.reason}</p></div>}
         <div className="equity-heading">
           <span className="eyebrow">Portfolio equity</span>
           <span
@@ -181,7 +176,6 @@ export function CatCard({
           )}
           {cat?.cap && <div className="negative">Entry limit: {cat.cap}</div>}
         </div>
-        {coaching}
         <dl className="metrics">
           {metrics.map(([label, value]) => (
             <div key={label}>
@@ -216,7 +210,7 @@ export function CatCard({
           <p>
             {meta?.tagline ??
               (id === "tiger"
-                ? "Bizzy volatility breakout"
+                ? "Active long/short momentum"
                 : "Breezy long/short trend")}
           </p>
           {meta?.strategyFacts?.length ? (

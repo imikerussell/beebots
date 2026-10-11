@@ -1,12 +1,12 @@
 # Catfolio: upstream engine restoration
 
-Source baseline: [imikerussell/beebots commit 6d3fe0d4f72dd25676c2f5caac0b83dff05031fb](https://github.com/imikerussell/beebots/tree/6d3fe0d4f72dd25676c2f5caac0b83dff05031fb), the upstream commit immediately before the Catfolio conversion. Strategy version: `catfolio-5-source-engine`.
+Source baseline: [imikerussell/beebots commit 6d3fe0d4f72dd25676c2f5caac0b83dff05031fb](https://github.com/imikerussell/beebots/tree/6d3fe0d4f72dd25676c2f5caac0b83dff05031fb), the upstream commit immediately before the Catfolio conversion. Current strategy version: `catfolio-6-active-momentum`; the source-engine restoration was `catfolio-5-source-engine`.
 
 ## What runs
 
-`src/engine.ts` is restored from that upstream file: lifecycle, serialized ticks, menus and model calls, benched-cap handling, funding, reconciliation, profit locks, close/resume behavior, order construction and fill processing. `src/risk.ts`, `src/lab/brain.ts`, `src/bees/bizzy.ts`, `src/bees/breezy.ts`, `src/bees/custom.ts` and `src/snapshot.ts` match the baseline exactly.
+`src/engine.ts` is restored from that upstream file: lifecycle, serialized ticks, menus and model calls, benched-cap handling, funding, reconciliation, profit locks, close/resume behavior, order construction and fill processing. `src/risk.ts`, `src/lab/brain.ts`, `src/bees/breezy.ts`, `src/bees/custom.ts` and `src/snapshot.ts` match the baseline exactly.
 
-- Dark Wall-E (`tiger`) runs Bizzy: daily long-only breakout, original stops and sizing, one new position/day by default, exit at 23:59 UTC.
+- Dark Wall-E (`tiger`) uses Catfolio's `src/bees/active-bizzy.ts`: symmetric intraday long/short momentum across 12 coins, 12 new positions/day, five-minute cooldown, ATR stops and a two-hour time limit. The original daily Bizzy module is retained as a historical reference, but is no longer selected by `BRAINS.bizzy`. See [active strategy](ACTIVE_WALL_E.md).
 - Good Wall-E (`mochi`) runs Breezy: nine Donchian horizons on four-hour bars, BTC/ETH, both directions, volatility sizing with the original floor, +1R adds, three-point directional trims, flips, coin switches, channel trailing, flat forcing and target rebalancing. Three new positions/day by default.
 
 The engine file has only these deliberate differences from the baseline:
@@ -16,7 +16,7 @@ The engine file has only these deliberate differences from the baseline:
 3. Slippage is recorded for Catfolio reports.
 4. A switch cannot open its new leg if the close left any existing position. This fixes the upstream partial-close case.
 
-`src/catfolio-engine.ts` surrounds that engine with provider selection, the 20-hour owner-approved trainer, audit records, dashboard events, capital validation and graceful shutdown. It does not implement another trading tick, action-selection path or protection loop. `src/cats.ts` binds cat identities and supplies descriptions/diagnostics through the upstream rules/coin wrapper.
+`src/catfolio-engine.ts` surrounds that engine with provider selection, the four-hour automatic trainer, audit records, dashboard events, capital validation and graceful shutdown. It does not implement another trading tick, action-selection path or protection loop. `src/cats.ts` binds cat identities and supplies descriptions/diagnostics through the upstream rules/coin wrapper.
 
 ## Source behavior and integration boundaries
 
@@ -24,7 +24,7 @@ A single serialized trading tick defaults to 10 seconds; market-history refresh 
 
 Source risk ordering is unchanged: stops/loss/retirement, model failure holds, discretionary opening gates, flat forcing, then position rebalancing. Forced entry and rebalance intentionally do not use the discretionary opening cooldown. Adds do not increment the new-position counter; switches do.
 
-Source sizing uses leverage x equity x 0.97, capped by `MAX_NOTIONAL_USD_PER_BEE`. Catfolio's explicit per-cat notional ceilings remain supported (default 200%). Accounts retain configured capital and daily loss limits (default 8%). The replacement engine's stop-risk sizing, bullish-only gate, minimum trend score, short-term confirmation, fee-distance filter and two-/six-hour exits are absent.
+Source sizing uses leverage x equity x 0.97, capped by `MAX_NOTIONAL_USD_PER_BEE`. Catfolio's explicit per-cat notional ceilings remain supported (default 200%). Accounts retain configured capital and daily loss limits (default 8%). The old replacement engine's stop-risk sizing, bullish-only gate, minimum trend score and fee-distance filter remain absent. Dark's new strategy adds symmetric momentum eligibility, per-coin freshness checks and a two-hour time exit inside the existing brain interface.
 
 The market feed still validates completed candles and previous-day ranges; execution adapters still validate quotes. Lot sizing retains finite-value validation and floors orders to stay within their budget; the paper simulator retains configured adverse slippage (default 2 bps). These are retained execution/data differences from upstream. Provider requests retain transport timeouts and response validation. The adapter rejects a response when coach rules changed during the request. These integrations do not reintroduce the replacement engine's per-coin risk gates, stale-response age checks or separate protective scheduler.
 
@@ -34,4 +34,4 @@ Persistence follows the source engine's ordering: decisions, orders, execution, 
 
 Set `DECISION_INTERVAL_MS=10000` for the upstream cadence. `PROTECTIVE_INTERVAL_MS` and `MAX_DECISION_AGE_MS` no longer control the engine. Existing explicit leverage, notional, trade-cap and cooldown overrides still apply; compare the deployed environment with `.env.example`. Database history, balances and positions are preserved without replacement capital. Earlier strategy migrations and trainer review history remain intact.
 
-Regression tests run the restored and frozen upstream engines through the same multi-tick scenarios and compare model requests, orders, decisions, caps, balances and positions. Coverage includes entries, holds, empty menus, shorts, flips, switches, trims, rebalances, benched caps, rollover, model outages, budget caps, stops, stale data, daily loss, retirement and experiment closure. File comparisons allow only the explicit integration differences listed above. Adapter tests cover dashboard/audit reporting, persistence, allocation checks, coach changes and partial/rejected closes. These tests verify behavior, not profitability.
+Regression tests run the restored and frozen upstream engines through the same multi-tick scenarios and compare model requests, orders, decisions, caps, balances and positions. Coverage includes entries, holds, empty menus, shorts, flips, switches, trims, rebalances, benched caps, rollover, model outages, budget caps, stops, stale data, daily loss, retirement and experiment closure. File comparisons allow only the explicit integration differences listed above. Bizzy source comparisons permit only the expanded coin constant and its prompt wording. Adapter tests cover dashboard/audit reporting, persistence, allocation checks, coach changes and partial/rejected closes. Engine parity tests feed both lifecycle implementations the same current brains; they verify lifecycle and risk parity, not that Dark still follows the retired daily strategy. Separate active-strategy tests cover symmetric signals, model-chosen shorts, reversals, repeat entries, stops and time exits. These tests verify behavior, not profitability.

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BIZZY_BREAKOUT_COINS } from "../src/bees/bizzy.js";
 import { CatCoach, CoachAnswer, COACH_INTERVAL_MS, coachValues } from "../src/coach.js";
 import { loadConfig, type BeeId } from "../src/config.js";
 import { Db } from "../src/db.js";
@@ -9,12 +10,12 @@ import { startServer } from "../src/server.js";
 import { EventBus } from "../src/events.js";
 import { Visitors } from "../src/visitors.js";
 import { NOW } from "./fixtures.js";
-const DAY = 86400000;
+
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const fn of cleanups.splice(0)) await fn(); });
 const answer = {
   idea: "Patient breakout confirmation",
-  rules: "Pick an offered BREAKOUT when r1h_pct > 0 and fund_z < 1.5. Pick WAIT when confirmation is weak. Pick CUT_LOSS when the breakout fails.",
+  rules: "Pick an offered LONG or SHORT when r1h_pct > 0 and fund_z < 1.5. Pick WAIT when confirmation is weak. Pick CLOSE when momentum fails.",
   coins: "ETH,BTC", reason: "Recent waits justify comparing trend strength before choosing an offered entry.",
   quip: "DARK Wall-E, sharpen your signals before sharpening your claws.",
   note: "Your cat has more patience than evidence so far. Test this idea without mistaking a short sample for an edge.",
@@ -49,19 +50,18 @@ describe("rules and coins trainer", () => {
     const payload = JSON.parse(String(h.fetcher.mock.calls[0]![1].body));
     const data = JSON.parse(payload.messages[1].content);
     expect(payload.response_format.json_schema.schema.required).toEqual(["idea", "rules", "coins", "reason", "quip", "note"]);
-    expect(data.cat).toMatchObject({ name: "DARK Wall-E", allowedCoins: ["BTC", "ETH", "SOL", "HYPE"] });
+    expect(data.cat).toMatchObject({ name: "DARK Wall-E", allowedCoins: [...BIZZY_BREAKOUT_COINS] });
     expect(data.scorecard).toHaveLength(2); expect(data.viewerCats).toBeNull();
     expect(data.universe.coins[0]).toMatchObject({ coin: "BTC", marketEligible: true });
     expect(JSON.stringify(payload)).not.toContain("private-gateway-key");
-    expect(payload.messages[0].content).toContain("20 hours");
+    expect(payload.messages[0].content).toContain("4 hours");
     const f = riskFixture();
     expect(Object.keys(trainerPlaybook(f.cfg)[0]!.observables).sort()).toEqual(Object.keys(f.brain.coinSnapshot(f.s, f.ctx)).sort());
   });
-  it("applies only approved rules/coins, persists on restart and restores originals without orders", async () => {
+  it("automatically applies validated rules/coins, persists on restart and restores originals without orders", async () => {
     const h = harness(), original = coachValues(h.cfg, "tiger"), limits = structuredClone(h.cfg.cats);
     await h.coach.tick(); const entry = h.coach.state().entries[0]!;
-    expect(entry.status).toBe("pending"); expect(coachValues(h.cfg, "tiger")).toEqual(original);
-    h.coach.resolve(entry.id, "accept");
+    expect(entry.status).toBe("accepted");
     expect(coachValues(h.cfg, "tiger")).toEqual({ rules: answer.rules, coins: ["BTC", "ETH"] });
     expect(h.cfg.cats).toEqual(limits); expect(h.changed).toHaveBeenCalledWith("tiger");
     expect(() => h.coach.resolve(entry.id, "accept")).toThrow(/no longer/);
@@ -72,56 +72,82 @@ describe("rules and coins trainer", () => {
   });
   it("approved coins filter the actual menu and rules reach Jev without bypassing fixed gates", async () => {
     const h = harness({ answer: { ...answer, coins: "ETH" } }); await h.coach.tick();
-    h.coach.resolve(h.coach.state().entries[0]!.id, "accept");
     const f = riskFixture(); f.cfg.slots.tiger = h.cfg.slots.tiger;
     let brain = catBrain("tiger", f.cfg);
     expect(brain.strategy).toContain(answer.rules);
-    expect(brain.menu(f.ctx).BREAKOUT_BTC).toBeUndefined();
+    expect(brain.menu(f.ctx).LONG_BTC).toBeUndefined();
     f.cfg.slots.tiger.coins = ["BTC"]; brain = catBrain("tiger", f.cfg);
-    expect(brain.menu(f.ctx).BREAKOUT_BTC).toBeDefined();
-    f.s.mid = 98;
-    expect(brain.menu(f.ctx).BREAKOUT_BTC).toBeUndefined();
+    expect(brain.menu(f.ctx).LONG_BTC).toBeDefined();
+    f.s.ret1hPct = 0;
+    expect(brain.menu(f.ctx).LONG_BTC).toBeUndefined();
   });
   it("treats empty coins as all baseline-allowed coins, even after a previous restriction", async () => {
     const h = harness({ answer: { ...answer, coins: "" } });
     h.cfg.slots.tiger.coins = ["BTC"];
-    await h.coach.tick(); h.coach.resolve(h.coach.state().entries[0]!.id, "accept");
-    expect(h.cfg.slots.tiger.coins).toEqual(["BTC", "ETH", "SOL", "HYPE"]);
+    await h.coach.tick();
+    expect(h.cfg.slots.tiger.coins).toEqual([...BIZZY_BREAKOUT_COINS]);
   });
-  it("uses a rolling 20-hour cooldown, permits two attempts on one UTC date, and survives restart", async () => {
+  it("uses a rolling 4-hour cooldown, permits two attempts on one UTC date, and survives restart", async () => {
     const h = harness({ startAt: Date.UTC(2026, 8, 24, 1) });
     await Promise.all([h.coach.tick(), h.coach.tick()]);
-    h.coach.resolve(h.coach.state().entries[0]!.id, "decline");
     h.advance(COACH_INTERVAL_MS - 1); observations(h.db, "tiger", h.now());
     await new CatCoach({ ...h.deps, cfg: h.config() }).tick(); expect(h.fetcher).toHaveBeenCalledTimes(1);
     h.advance(1); await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(2);
     expect(h.coach.state().entries.map(e => e.day)).toEqual(["2026-09-24", "2026-09-24"]);
   });
-  it("does not replace a pending review at hour 20 and enforces cooldown from approval", async () => {
+  it("waits four hours after applying changes and records an unchanged review without rewriting", async () => {
     const h = harness(); await h.coach.tick();
-    h.advance(COACH_INTERVAL_MS); observations(h.db, "tiger", h.now()); await h.coach.tick();
-    expect(h.fetcher).toHaveBeenCalledTimes(1);
-    h.coach.resolve(h.coach.state().entries[0]!.id, "accept");
     expect(h.coach.state().cats[0]?.nextReviewAt).toBe(h.now() + COACH_INTERVAL_MS);
     h.advance(COACH_INTERVAL_MS - 1); observations(h.db, "tiger", h.now()); await h.coach.tick();
     expect(h.fetcher).toHaveBeenCalledTimes(1);
+    h.advance(1); await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("no_change");
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    expect(h.coach.state().cats[0]?.acceptedCount).toBe(1);
   });
   it("allows rules/coins coaching while positioned, without placing an order", async () => {
     const h = harness({hasPosition:()=>true}); await h.coach.tick();
     const entry = h.coach.state().entries[0]!;
-    expect(entry.status).toBe("pending");
-    h.coach.resolve(entry.id,"accept");
+    expect(entry.status).toBe("accepted");
     expect(h.cfg.slots.tiger.rules).toBe(answer.rules);
     expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
   });
-  it("refuses stale proposals and expires them after 24 hours", async () => {
-    const h=harness(); await h.coach.tick(); const id=h.coach.state().entries[0]!.id;
-    h.cfg.slots.tiger.rules += " Extra rule.";
-    expect(()=>h.coach.resolve(id,"accept")).toThrow(/Settings changed/);
-    h.advance(DAY);expect(()=>h.coach.resolve(id,"accept")).toThrow(/no longer/);
+  it.each(["settings", "closed", "stopped"])("expires a review if %s changes during the request", async (change) => {
+    const h = harness();
+    h.fetcher.mockImplementationOnce(async () => {
+      if (change === "settings") h.cfg.slots.tiger.rules += " Extra rule.";
+      if (change === "closed") h.deps.closed = () => true;
+      if (change === "stopped") void h.coach.stop();
+      return envelope(answer);
+    });
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("expired");
+    expect(h.changed).not.toHaveBeenCalled();
+    expect(h.cfg.slots.tiger.rules).not.toBe(answer.rules);
+  });
+  it("counts rules-only waiting observations and reports empty-menu waits and blockers", async () => {
+    const h = harness();
+    h.db.raw.prepare("UPDATE decisions SET choice=NULL, menu_json='{}', audit_json=?").run(JSON.stringify({source:"rules",entryDiagnostics:[{coin:"BTC",blockers:["breakout_not_reached"]}]}));
+    await h.coach.tick();
+    const entry = h.coach.state().entries[0]!;
+    expect(entry.status).toBe("accepted");
+    expect(entry.evidence).toMatchObject({summary:{decisions:31,waits:31,waitOnly:31},blockers:[{reason:"breakout_not_reached",decisions:31}]});
+  });
+  it("runs automatically without an owner token", async () => {
+    const h = harness(); h.cfg.coach.adminToken = undefined;
+    await h.coach.tick(); expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(h.coach.state()).toMatchObject({automatic:true,approvalMessage:null});
+  });
+  it("expires manual-era pending suggestions on upgrade without applying them", async () => {
+    const h = harness(); await h.coach.tick();
+    h.db.raw.exec("DELETE FROM coach_rule_overrides; UPDATE coach_reviews SET status='pending',resolved_at=NULL;");
+    h.db.setMeta("coach_automation_version", "0");
+    const cfg = h.config(), coach = new CatCoach({...h.deps,cfg});
+    expect(coach.state().entries[0]?.status).toBe("expired");
+    expect(cfg.slots.tiger.rules).not.toBe(answer.rules);
   });
   it.each([
-    { coins: "BTC,DOGE" }, { coins: "BTC,BTC" }, { coins: "btc" }, { quip: "tiger, do better." },
+    { coins: "BTC,NOTACOIN" }, { coins: "BTC,BTC" }, { coins: "btc" }, { quip: "tiger, do better." },
     { rules: "One sentence." }, { rules: "Pick WAIT. Pick LONG_BTC. Pick HOLD. Pick CLOSE. Pick WAIT again." },
     { rules: "Pick LONG_BTC above $100. Pick WAIT otherwise." }, { rules: "Pick WAIT 👀. Pick CLOSE." },
     { rules: "A".repeat(401) }, { quip: "DARK Wall-E, #try harder." }, { note: "One sentence." },
@@ -131,9 +157,10 @@ describe("rules and coins trainer", () => {
     await h.coach.tick(); expect(h.coach.state().entries[0]?.status).toBe("failed");
     expect(h.cfg).toEqual(before); await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(1);
   });
-  it("rejects unchanged rules and applies each cat's own coin whitelist", async () => {
+  it("allows coin-only updates and applies each cat's own coin whitelist", async () => {
     const h = harness({ answer: { ...answer, rules: loadConfig({}).slots.tiger.rules } });
-    await h.coach.tick(); expect(h.coach.state().entries[0]?.status).toBe("failed");
+    await h.coach.tick(); expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(h.cfg.slots.tiger.coins).toEqual(["BTC", "ETH"]);
     const good = harness({ seed: false, answer: { ...answer, quip: "Good Wall-E, mind those paws.", coins: "SOL" } });
     observations(good.db, "mochi", good.now()); await good.coach.tick();
     expect(good.coach.state().entries[0]?.status).toBe("failed");
@@ -143,8 +170,8 @@ describe("rules and coins trainer", () => {
     observations(h.db, "tiger", h.now(), 10);
     expect(h.coach.state().cats[0]).toMatchObject({ phase: "gathering", observations: 10, observedMinutes: 60 });
     observations(h.db, "tiger", h.now(), 20); observations(h.db, "mochi", h.now());
-    await h.coach.tick(); expect(h.coach.state().entries.map(e => e.status)).toEqual(["pending", "pending"]);
-    expect(h.coach.state().cats[0]?.phase).toBe("awaiting_approval");
+    await h.coach.tick(); expect(h.coach.state().entries.map(e => e.status)).toEqual(["accepted", "accepted"]);
+    expect(h.coach.state().cats[0]?.phase).toBe("scheduled");
   });
   it("requires an hour even if decisions are frequent and respects disabled coaching", async () => {
     const h = harness(); h.db.raw.prepare("UPDATE decisions SET ts=?").run(h.now() - 20 * 60000);
@@ -154,11 +181,29 @@ describe("rules and coins trainer", () => {
     expect(off.coach.state().cats[0]?.phase).toBe("paused");
   });
   it("preserves explicit rule edits on restart over an old overlay", async () => {
-    const h = harness(); await h.coach.tick(); h.coach.resolve(h.coach.state().entries[0]!.id, "accept");
+    const h = harness(); await h.coach.tick();
     const cfg = h.config(); cfg.slots.tiger.rules = "Pick WAIT. Review the trend.";
     const restarted = new CatCoach({ ...h.deps, cfg });
     expect(cfg.slots.tiger.rules).toBe("Pick WAIT. Review the trend.");
     expect(restarted.state().cats[0]?.activeReviewId).toBeNull();
+  });
+  it("restores the expanded universe when an overlay was saved against the old four-coin baseline", async () => {
+    const h = harness(); await h.coach.tick();
+    const baseline = coachValues(h.config(), "tiger"); baseline.coins = ["BTC", "ETH", "SOL", "HYPE"];
+    h.db.raw.prepare("UPDATE coach_rule_overrides SET baseline_json=? WHERE cat='tiger'").run(JSON.stringify(baseline));
+    const cfg = h.config(), coach = new CatCoach({...h.deps,cfg});
+    expect(cfg.slots.tiger.coins).toEqual([...BIZZY_BREAKOUT_COINS]);
+    expect(coach.state().cats[0]?.activeReviewId).toBeNull();
+    expect(coach.state().entries).toHaveLength(1);
+  });
+  it("retires only Dark's old strategy overlay while preserving Good's rules on the active upgrade", async () => {
+    const h = harness(); observations(h.db,"mochi",h.now()); await h.coach.tick();
+    h.db.setMeta("coach_strategy_version","catfolio-5-source-engine");
+    const cfg = h.config(), restarted = new CatCoach({...h.deps,cfg});
+    expect(restarted.state().cats[0]?.activeReviewId).toBeNull();
+    expect(cfg.slots.tiger.rules).toContain("LONG or SHORT");
+    expect(restarted.state().cats[1]?.activeReviewId).not.toBeNull();
+    expect(cfg.slots.mochi.rules).toBe(answer.rules);
   });
   it("preserves legacy history while retiring replacement-engine overlays and pending patches", async () => {
     const h = harness({ seed: false });
@@ -173,7 +218,7 @@ describe("rules and coins trainer", () => {
     expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
     expect(() => restarted.resolve(42, "accept")).toThrow(/no longer/);
     h.advance(COACH_INTERVAL_MS); observations(h.db, "tiger", h.now()); await restarted.tick();
-    expect(restarted.state().entries[0]?.status).toBe("pending");
+    expect(restarted.state().entries[0]?.status).toBe("accepted");
     expect(restarted.state().entries).toHaveLength(2);
   });
   it("records provider failure safely and closes interrupted reviews on restart", async () => {
@@ -194,19 +239,19 @@ describe("rules and coins trainer", () => {
     expect(CoachAnswer.safeParse(answer).success).toBe(true);
     expect(CoachAnswer.safeParse({ ...answer, change: null }).success).toBe(false);
   });
-  it("requires owner authorization and applies approval via the dashboard API", async () => {
-    const h = harness(); await h.coach.tick(); const id = h.coach.state().entries[0]!.id;
+  it("publishes automatic decisions and still requires owner authorization to restore originals", async () => {
+    const h = harness(); await h.coach.tick();
     const server = startServer({ profile: () => ({}), engine: { db: h.db, bus: new EventBus(h.db), visitors: new Visitors(h.db), snapshot: () => ({}), health: () => ({ ok: true }), coach: h.coach, coachAdminToken: h.cfg.coach.adminToken } }, 0, "127.0.0.1");
     await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.unshift(() => new Promise<void>((resolve) => server.close(() => resolve())));
     const address = server.address() as { port: number }, url = `http://127.0.0.1:${address.port}`;
     const state = await (await fetch(`${url}/coach`)).text();
     expect(state).not.toContain("private-gateway-key"); expect(state).not.toContain(h.cfg.coach.adminToken);
-    const post = (token?: string) => fetch(`${url}/coach/accept`, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ id }) });
+    const post = (token?: string) => fetch(`${url}/coach/reset`, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ cat: "tiger" }) });
     expect((await post()).status).toBe(401); expect((await post("wrong")).status).toBe(401);
-    expect(h.cfg.slots.tiger.rules).not.toBe(answer.rules);
-    expect((await post(h.cfg.coach.adminToken)).status).toBe(200); expect(h.cfg.slots.tiger.rules).toBe(answer.rules);
+    expect(h.cfg.slots.tiger.rules).toBe(answer.rules);
+    expect((await post(h.cfg.coach.adminToken)).status).toBe(200); expect(h.cfg.slots.tiger.rules).not.toBe(answer.rules);
     expect((await post(h.cfg.coach.adminToken)).status).toBe(409);
-    expect((await fetch(`${url}/coach/accept`, { method: "OPTIONS" })).status).toBe(405);
+    expect((await fetch(`${url}/coach/reset`, { method: "OPTIONS" })).status).toBe(405);
   });
 });

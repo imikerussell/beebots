@@ -125,7 +125,7 @@ export class CatfolioEngine {
       insertDecision:row=>{
         const ctx=this.ctx(row.bee),brain=catBrain(row.bee,this.d.cfg),diagnostics=ctx.bee.position?[]:entryDiagnostics(row.bee,ctx);
         const state=row.stateJson?JSON.parse(row.stateJson):null;
-        const audit={at:row.ts,source:state?.utc?"model_request":"protection",strategyVersion:STRATEGY_VERSION,rubricVersion:RUBRIC_VERSION,
+        const audit={at:row.ts,source:state?.utc?(row.latencyMs === null || row.inputTokens === 0 ? "rules" : "model_request"):"protection",strategyVersion:STRATEGY_VERSION,rubricVersion:RUBRIC_VERSION,
           entryDiagnostics:diagnostics,strategy:brain.strategy,rubric:brain.convictionLabels,state,
           menu:brain.menu(ctx),account:ctx.bee,market:{ts:ctx.view.ts,instruments:[...ctx.view.instruments],tickers:[...ctx.view.tickers],stats:[...ctx.view.stats]},
           config:{...decisionConfiguration(this.d.cfg),limits:this.d.cfg.cats[row.bee],risk:this.d.cfg.risk,slippageBps:this.d.cfg.paperSlippageBps,

@@ -86,7 +86,7 @@ describe("bizzy breakout (one Larry Williams breakout a day)", () => {
     );
     expect(Object.keys(m)).toEqual([]);
   });
-  it("only BTC, ETH, SOL and HYPE inside her spread gate", () => {
+  it("only configured breakout coins inside her spread gate", () => {
     const v = view([
       coin("SOL", { breakout: lvl, spreadBp: 4.9 }),
       coin("PUMP", { breakout: lvl }),

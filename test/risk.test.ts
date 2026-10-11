@@ -6,9 +6,9 @@ import { NOW, position } from "./fixtures.js";
 import { riskFixture } from "./risk-fixture.js";
 
 describe("restored source risk behavior", () => {
-  it("Bizzy waits indefinitely without a trigger; Breezy restores its strongest directional position", () => {
+  it("Dark waits without a qualifying momentum signal; Breezy restores its strongest directional position", () => {
     const t = riskFixture(), m = riskFixture("mochi");
-    t.s.mid = 99; t.b.flatSince = NOW - 86400000;
+    t.s.ret1hPct = 0; t.b.flatSince = NOW - 86400000;
     expect(t.run(null).action.kind).toBe("none");
     m.s.trend!.score = -9;
     expect(m.run(null)).toMatchObject({action:{kind:"open",side:"short"},forcedBy:"max_flat"});

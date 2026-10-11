@@ -192,13 +192,13 @@ async function coachRequest(req: IncomingMessage, res: ServerResponse, path: str
   if (req.method === "GET" && path === "/coach") return json(res, 200, engine.coach.state());
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed." });
   const expected = engine.coachAdminToken;
-  if (!expected) return json(res, 503, { error: "Set COACH_ADMIN_TOKEN on the engine to enable approval." });
+  if (!expected) return json(res, 503, { error: "Set COACH_ADMIN_TOKEN on the engine to enable owner controls." });
   const provided = req.headers.authorization ?? "";
   const wanted = `Bearer ${expected}`;
   // A bearer header + JSON body prevents ambient-cookie CSRF. Cross-origin preflight is not allowed.
   const suppliedBytes = Buffer.from(provided), expectedBytes = Buffer.from(wanted);
   if (suppliedBytes.length !== expectedBytes.length || !timingSafeEqual(suppliedBytes, expectedBytes))
-    return json(res, 401, { error: "Enter the engine's owner key to review suggestions." });
+    return json(res, 401, { error: "Enter the engine's owner key to use owner controls." });
   if (req.headers["content-type"]?.split(";")[0] !== "application/json") return json(res, 415, { error: "JSON required." });
   let raw = "";
   for await (const chunk of req) {

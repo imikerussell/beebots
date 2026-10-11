@@ -17,21 +17,21 @@ afterEach(()=>{for(const cleanup of cleanups.splice(0))cleanup();vi.useRealTimer
 async function run(Cls:typeof Engine|typeof UpstreamEngine, scenario:string){
   let now=NOW, choice="LONG_BTC", fail=false, close=false;
   const cfg=loadConfig({MOCHI_COOLDOWN_MINUTES:"0",TIGER_COOLDOWN_MINUTES:"0"});
-  const btc=coin("BTC",{trend:trend({score:9,longOn:9}),breakout:{dayOpen:99,prevRange:2,trigger:100}});
-  const eth=coin("ETH",{trend:trend({score:-8,shortOn:8}),breakout:{dayOpen:99,prevRange:2,trigger:100}});
+  const btc=coin("BTC",{ret1hPct:1,macdHistPct:0.2,trend:trend({score:9,longOn:9}),breakout:{dayOpen:99,prevRange:2,trigger:100}});
+  const eth=coin("ETH",{ret1hPct:-1,macdHistPct:-0.2,trend:trend({score:-8,shortOn:8}),breakout:{dayOpen:99,prevRange:2,trigger:100}});
   const v=view([btc,eth]),db=new Db(":memory:"),calls:DecisionAsk[]=[];
   const feed={lastRefreshAt:now,view:()=>v,refresh:async()=>{feed.lastRefreshAt=now;},refreshTickers:async()=>{for(const t of v.tickers.values())t.ts=now;}} as unknown as MarketFeed;
   const jev:EngineJev={capTripped:false,downSince:null,spentTodayUsd:0,decide:async ask=>{
     calls.push(structuredClone(ask));
     if(fail)return {ok:false,reason:"timeout",latencyMs:1};
-    const pick=ask.menu.BREAKOUT_BTC?"BREAKOUT_BTC":ask.menu[choice]?choice:Object.keys(ask.menu)[0]!;
+    const pick=ask.menu[choice]?choice:Object.keys(ask.menu)[0]!;
     return {ok:true,choice:pick,probabilities:{[pick]:1},confidence:1,conviction:3,convictionRaw:3,inputTokens:2,costUsd:0.001,latencyMs:1,model:"fixture"};
   }};
   const engine=new Cls({cfg,db,feed,jev,exec:new SimExecutor(()=>v,0.0005,()=>now,2),bus:new EventBus(db),alerts:{send:()=>{}} as unknown as Alerts,now:()=>now,closeRequested:()=>close});
   cleanups.push(()=>{engine.stop();db.close();});
   await engine.start();
   const b=engine.bees.mochi;
-  if(scenario==="empty") {btc.breakout=null;eth.breakout=null;}
+  if(scenario==="empty") {btc.ret1hPct=0;eth.ret1hPct=0;}
   if(["benched_trade","benched_fee","benched_stop","rollover","resume"].includes(scenario)){
     b.position=position(btc,{contracts:20,stopPx:90,entryScore:9});
     b.cap=scenario==="benched_fee"?"fee_budget":"trade_cap";b.tradesToday=3;

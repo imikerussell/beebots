@@ -1,6 +1,4 @@
-import { CatCoach } from "./CatCoach";
-import { useTrainerSession } from "./useTrainerSession";
-import { TrainerAccess } from "./TrainerAccess";
+import { TrainerPanel } from "./TrainerPanel";
 import { ModelIssue } from "./ModelIssue";
 import { DecisionStream } from "./DecisionStream";
 import { useState } from "react";
@@ -19,10 +17,7 @@ export function App() {
     connected,
     streamStatus,
     historyStatus,
-    refresh,
   } = useFeed();
-  const { trainerKey, restoring, unlockTrainer, lockTrainer } =
-    useTrainerSession();
   const [report, setReport] = useState<Report | string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const loadReport = async () => {
@@ -99,15 +94,7 @@ export function App() {
           >
             {reportLoading ? "Loading…" : "Morning report ↗"}
           </button>
-          <TrainerAccess
-            unlocked={!!trainerKey}
-            restoring={restoring}
-            onUnlock={unlockTrainer}
-            onLock={lockTrainer}
-            state={snap?.coach}
-            connected={connected}
-            names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }}
-          />
+
         </div>
       </header>
       {!connected && (
@@ -139,22 +126,12 @@ export function App() {
               meta={profile?.cats.find((c) => c.id === id)}
               curve={curves[id]}
               snap={snap}
-              coaching={
-                trainerKey ? (
-                  <CatCoach
-                    cat={id}
-                    name={nameFor(id)}
-                    state={snap?.coach}
-                    ownerKey={trainerKey}
-                    onUpdate={refresh}
-                    onLock={lockTrainer}
-                  />
-                ) : undefined
-              }
+
             />
           ))}
         </section>
         <aside className="sidebar">
+          <TrainerPanel state={snap?.coach} connected={connected} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} />
           <DecisionStream
             liveDecisionKeys={liveDecisionKeys}
             decisions={decisions}

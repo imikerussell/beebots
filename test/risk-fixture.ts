@@ -24,8 +24,8 @@ export function riskFixture(id: BeeId = "tiger") {
     uplR: null as number | null,
   };
   const proposal = {
-    label: id === "tiger" ? "BREAKOUT_BTC" : "LONG_BTC",
-    intent: brain.menu(ctx)[id === "tiger" ? "BREAKOUT_BTC" : "LONG_BTC"]!.intent,
+    label: "LONG_BTC",
+    intent: brain.menu(ctx)["LONG_BTC"]!.intent,
     prob: 0.9,
     conviction: 3,
   };

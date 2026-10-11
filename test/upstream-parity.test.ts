@@ -8,9 +8,14 @@ import { NOW, position } from "./fixtures.js";
 import type { Proposal } from "../src/risk.js";
 
 describe("pinned upstream trading behavior (6d3fe0d)",()=>{
-  it("keeps both strategy brains and the custom rules adapter identical to the upstream source",()=>{
+  it("keeps source brains and adapter intact except the documented Bizzy universe expansion",()=>{
     const hashes={bizzy:"b595b0b93309e468b849c9f2e95c21cfe7efd871f5f69b984c5a111b4f1cd895",breezy:"d4887163d4045d829ad751efa54f36d1638302e4ee4d8fd4220142a158e60886",custom:"bf22c06af263ffb2f68e5735ffc1fc0c5bb21ecd670cbeee861a1f2f0151435a"};
-    for(const [name,hash] of Object.entries(hashes)) expect(createHash("sha256").update(readFileSync(new URL(`../src/bees/${name}.ts`,import.meta.url))).digest("hex")).toBe(hash);
+    for (const [name, hash] of Object.entries(hashes)) {
+      let source = readFileSync(new URL(`../src/bees/${name}.ts`, import.meta.url), "utf8");
+      if (name === "bizzy") source = source.replace(/export const BIZZY_BREAKOUT_COINS = .* as const;/, 'export const BIZZY_BREAKOUT_COINS = ["BTC", "ETH", "SOL", "HYPE"] as const;')
+        .replace("when an allowed coin breaks above", "when BTC, ETH, SOL or HYPE breaks above");
+      expect(createHash("sha256").update(source).digest("hex")).toBe(hash);
+    }
   });
   it.each(["tiger","mochi"] as const)("%s risk actions match the frozen source oracle for valid market inputs",id=>{
     for(const scenario of ["entry","weak","flat","outage","cap","fee","loss","retired","stop","hold","add","flip","trim","cooldown","stale"]){
