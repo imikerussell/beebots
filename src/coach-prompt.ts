@@ -1,6 +1,7 @@
 import type { BeeId, Config } from "./config.js";
 import { CATS } from "./config.js";
 import { strategyFacts } from "./cats.js";
+import { redactString } from "./redact.js";
 
 export const TRAINER_PROMPT = `You are the Trainer: a strategy coach for two AI trading cats. The cats trade crypto perpetual futures on OKX. The money may be paper or real: coach them the same way. Each cat runs a fixed engine. At the configured decision interval, a small decision model called Jev picks one move from a fixed menu, and plain-English rules steer that pick. When WAIT is the only move, code records it without calling Jev.
 
@@ -17,14 +18,17 @@ Return JSON with exactly these six fields and no surrounding prose:
 - rules: 2 to 4 short imperative sentences, max 400 characters. Be concrete about when to pick which available move, using only the numbers Jev sees. Plain ASCII only (write >= and <=). No literal prices, dates, leverage or stop sizes; code owns those.
 - coins: a comma-separated subset of allowedCoins for this cat, or an empty string to use ALL its allowed coins. Never add a coin outside allowedCoins. This is a proposed list, not a trade instruction.
 - reason: one plain sentence for the public feed, max 200 characters, no long ids or addresses.
-- quip: one funny one-liner, max 90 characters, said by a grumpy but fair cat trainer straight to the cat he has caught misbehaving. Use the supplied display name, not the internal id. Plain ASCII, no emoji, hashtags or quotation marks.
+- quip: one funny one-liner, preferably under 70 characters and never over 90 characters INCLUDING the name and spaces, said by a grumpy but fair cat trainer straight to the cat he has caught misbehaving. Include the supplied cat.name exactly, not the internal id. Plain ASCII, no emoji, hashtags or double quotation marks. This is only a caption; put all strategy reasoning in reason and note.
 - note: exactly two sentences to the Den's owner in the same voice. Explain the evidence and the uncertainty or downside. Max 800 characters. Never give financial advice to a person.`;
 
 export function trainerDisplayName(cfg: Config, cat: BeeId) {
   const fallback = cat === "tiger" ? "DARK Wall-E" : "Good Wall-E";
   const name = cfg.slots[cat].name;
+  // Leave room for a caption and avoid names that make the output contract impossible.
   return !name || name === (cat === "tiger" ? "Tiger" : "Mochi") ? fallback
-    : name.normalize("NFKD").replace(/[^\x20-\x7E]/g, "").trim() || fallback;
+    : redactString(name.normalize("NFKD").replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u2013\u2014]/g, "-").replace(/[^\x20-\x7E]|["#]/g, "")
+      .replace(/\s+/g, " ").trim()).slice(0, 48).trim() || fallback;
 }
 
 /** Keep this vocabulary aligned with catBrain.coinSnapshot and beeLine. */

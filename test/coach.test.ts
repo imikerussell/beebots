@@ -4,7 +4,7 @@ import { CatCoach, CoachAnswer, COACH_INTERVAL_MS, coachValues } from "../src/co
 import { loadConfig, type BeeId } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { catBrain } from "../src/cats.js";
-import { trainerPlaybook } from "../src/coach-prompt.js";
+import { trainerDisplayName, trainerPlaybook } from "../src/coach-prompt.js";
 import { riskFixture } from "./risk-fixture.js";
 import { startServer } from "../src/server.js";
 import { EventBus } from "../src/events.js";
@@ -148,10 +148,10 @@ describe("rules and coins trainer", () => {
     expect(cfg.slots.tiger.rules).not.toBe(answer.rules);
   });
   it.each([
-    { coins: "BTC,NOTACOIN" }, { coins: "BTC,BTC" }, { coins: "btc" }, { quip: "tiger, do better." },
+    { coins: "BTC,NOTACOIN" }, { coins: "BTC,BTC" }, { coins: "btc" }, { quip: null },
     { rules: "One sentence." }, { rules: "Pick WAIT. Pick LONG_BTC. Pick HOLD. Pick CLOSE. Pick WAIT again." },
     { rules: "Pick LONG_BTC above $100. Pick WAIT otherwise." }, { rules: "Pick WAIT 👀. Pick CLOSE." },
-    { rules: "A".repeat(401) }, { quip: "DARK Wall-E, #try harder." }, { note: "One sentence." },
+    { rules: "A".repeat(401) }, { quip: 123 }, { note: "One sentence." },
     { stopRiskPct: 10 },
   ])("rejects invalid proposals without mutating settings: %j", async (patch) => {
     const h = harness({ answer: { ...answer, ...patch } }), before = structuredClone(h.cfg);
@@ -263,6 +263,62 @@ describe("rules and coins trainer", () => {
     expect(h.fetcher).toHaveBeenCalledTimes(1);
     expect(h.coach.state().entries[0]?.status).toBe("accepted");
     expect(h.cfg.slots.tiger.rules).toBe("Pick LONG_BTC when r1h_pct >= 0.5. Pick WAIT otherwise.");
+  });
+  it.each([
+    "DARK Wall-E, " + "watch your signals carefully. ".repeat(5),
+    "tiger, do better.", "", "🐈🐾",
+    '“DARK Wall-E, café first… then #signals 🐾.”',
+  ])("repairs a cosmetic quip without retrying or changing the proposed strategy: %s", async (quip) => {
+    const h = harness({ answer: { ...answer, quip } });
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(1);
+    const entry = h.coach.state().entries[0]!;
+    expect(entry.status).toBe("accepted");
+    const review = CoachAnswer.parse(entry.review);
+    expect(review.quip).toContain("DARK Wall-E");
+    expect(review.quip.length).toBeLessThanOrEqual(90);
+    expect(review.quip).not.toMatch(/[^\x20-\x7E]|["#]/);
+    expect(review).toEqual({ ...answer, quip: review.quip });
+    expect(coachValues(h.cfg, "tiger")).toEqual({rules:answer.rules, coins:["BTC","ETH"]});
+    const restarted = new CatCoach({...h.deps, cfg:h.config()});
+    expect(restarted.state().entries[0]?.review).toEqual(review);
+  });
+  it("preserves a valid quip and cleans punctuation without replacing its text", async () => {
+    const h = harness(); await h.coach.tick();
+    expect(CoachAnswer.parse(h.coach.state().entries[0]?.review).quip).toBe(answer.quip);
+    const formatted = harness({answer:{...answer,quip:'“DARK Wall-E, café first… then #signals 🐾.”'}});
+    await formatted.coach.tick();
+    expect(CoachAnswer.parse(formatted.coach.state().entries[0]?.review).quip).toBe("DARK Wall-E, cafe first... then signals.");
+  });
+  it("keeps a custom trainer name compatible with the caption limit and required characters", async () => {
+    const h = harness();
+    h.cfg.slots.tiger.name = '“Café #Cat” ' + "Very Long Name ".repeat(10);
+    const name = trainerDisplayName(h.cfg, "tiger");
+    expect(name.length).toBeLessThanOrEqual(48);
+    expect(name).not.toMatch(/[^\x20-\x7E]|["#]/);
+    h.fetcher.mockResolvedValueOnce(envelope({...answer,quip:"Wrong cat."}));
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(CoachAnswer.parse(h.coach.state().entries[0]?.review).quip).toContain(name);
+  });
+  it("still rejects invalid strategy fields when the quip is repaired", async () => {
+    const h = harness({answer:{...answer,quip:"🐈",rules:"Pick WAIT."}}), before=coachValues(loadConfig({}),"tiger");
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    expect(h.coach.state().entries[0]?.status).toBe("failed");
+    expect(h.coach.state().entries[0]?.error).toContain("rules:");
+    expect(coachValues(h.cfg,"tiger")).toEqual(before);
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it("does not lose a valid strategy repair when the replacement quip is still too long", async () => {
+    const h = harness({answer:{...answer,quip:"DARK Wall-E, " + "take a careful look. ".repeat(10)}});
+    h.fetcher.mockResolvedValueOnce(envelope({...answer,note:"Only one sentence."}));
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(CoachAnswer.parse(h.coach.state().entries[0]?.review).quip).toBe("DARK Wall-E, keep your paws on the evidence.");
+    expect(h.cfg.slots.tiger.rules).toBe(answer.rules);
+    expect(h.changed).toHaveBeenCalledTimes(1);
   });
   it("retries truncated output with more room and never applies the incomplete proposal", async () => {
     const h = harness();

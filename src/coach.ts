@@ -63,7 +63,9 @@ const RESPONSE_FORMAT = {
   json_schema: { name: "cat_coach_rules", strict: true, schema: {
     type: "object", additionalProperties: false,
     required: ["idea", "rules", "coins", "reason", "quip", "note"],
-    properties: Object.fromEntries(Object.entries(FIELD_FORMATS).map(([key, description]) => [key, { type: "string", description }])),
+    properties: Object.fromEntries(Object.entries(FIELD_FORMATS).map(([key, description]) => [key, {
+      type: "string", description, ...(key === "quip" ? { minLength: 1, maxLength: 90 } : {}),
+    }])),
   } },
 };
 type Answer = z.infer<typeof CoachAnswer>;
@@ -75,7 +77,14 @@ function responseFormatError(error: z.ZodError): CoachReviewError {
     : "Return exactly idea, rules, coins, reason, quip and note, all as strings.").join(" ");
   return new CoachReviewError("response_schema", detail);
 }
-function parseReview(body: string): Answer {
+/** A decorative caption must never invalidate otherwise valid strategy fields. */
+function formatQuip(text: string, name: string): string {
+  const cleaned = redactString(text.normalize("NFKD").replace(/\u2026/g, "...")
+    .replace(/[^\x20-\x7E]|["#]/g, "").replace(/\s+/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim());
+  return CoachAnswer.shape.quip.safeParse(cleaned).success && cleaned.includes(name)
+    ? cleaned : `${name}, keep your paws on the evidence.`;
+}
+function parseReview(body: string, name: string): Answer {
   if (body.length > 100_000) throw new CoachReviewError("response_envelope");
   let envelope: unknown;
   try { envelope = JSON.parse(body); } catch { throw new CoachReviewError("response_envelope"); }
@@ -95,6 +104,9 @@ function parseReview(body: string): Answer {
         .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
         .replace(/[\u2013\u2014]/g, "-").replace(/\u2265/g, ">=").replace(/\u2264/g, "<=").replace(/\s+/g, " ").trim());
     }
+    // Keep missing/non-string fields invalid. Only repair this presentation-only string;
+    // never truncate or substitute rules, coins, reasons, or evidence.
+    if (typeof fields.quip === "string") fields.quip = formatQuip(fields.quip, name);
   }
   const review = CoachAnswer.safeParse(value);
   if (!review.success) throw responseFormatError(review.error);
@@ -313,7 +325,7 @@ export class CatCoach {
           if (!response.ok) throw new CoachReviewError(response.status === 401 || response.status === 403 ? "gateway_auth"
             : response.status === 402 ? "gateway_credit" : response.status === 429 ? "gateway_rate_limit" : "gateway_failed");
           stage = "response";
-          try { review = parseReview(await response.text()); break; }
+          try { review = parseReview(await response.text(), displayName(cfg, cat)); break; }
           catch (err) {
             if (!(err instanceof CoachReviewError) || !["response_truncated", "response_json", "response_schema"].includes(err.message)) throw err;
             if (attempt === 1) throw new CoachReviewError(err.message, [err.detail, "The automatic repair attempt also failed; no changes were applied."].filter(Boolean).join(" "));
