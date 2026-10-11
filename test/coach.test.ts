@@ -10,6 +10,7 @@ import { startServer } from "../src/server.js";
 import { EventBus } from "../src/events.js";
 import { Visitors } from "../src/visitors.js";
 import { NOW } from "./fixtures.js";
+import { STRATEGY_VERSION } from "../src/decision.js";
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const fn of cleanups.splice(0)) await fn(); });
@@ -25,7 +26,7 @@ function observations(db: Db, cat: BeeId, now: number, count = 31) {
     bee: cat, ts: now - 3600000 + i * 60000, stateHash: null, stateJson: null,
     menuJson: JSON.stringify({ WAIT: {} }), choice: "WAIT", probabilities: { WAIT: 1 }, confidence: 1, conviction: 0,
     latencyMs: 5, inputTokens: 10, jevCostUsd: 0, jevError: null, action: { kind: "none" }, vetoedBy: null, forcedBy: null, status: "WAIT",
-    auditJson: JSON.stringify({ source: "model_request", entryDiagnostics: [{ coin: "BTC", blockers: ["minTrendScore"] }] }),
+    auditJson: JSON.stringify({ source: "model_request", strategyVersion: STRATEGY_VERSION, entryDiagnostics: [{ coin: "BTC", blockers: ["minTrendScore"] }] }),
   });
 }
 const envelope = (a: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(a) }, finish_reason: "stop" }] }));
@@ -127,7 +128,7 @@ describe("rules and coins trainer", () => {
   });
   it("counts rules-only waiting observations and reports empty-menu waits and blockers", async () => {
     const h = harness();
-    h.db.raw.prepare("UPDATE decisions SET choice=NULL, menu_json='{}', audit_json=?").run(JSON.stringify({source:"rules",entryDiagnostics:[{coin:"BTC",blockers:["breakout_not_reached"]}]}));
+    h.db.raw.prepare("UPDATE decisions SET choice=NULL, menu_json='{}', audit_json=?").run(JSON.stringify({source:"rules",strategyVersion:STRATEGY_VERSION,entryDiagnostics:[{coin:"BTC",blockers:["breakout_not_reached"]}]}));
     await h.coach.tick();
     const entry = h.coach.state().entries[0]!;
     expect(entry.status).toBe("accepted");
@@ -155,7 +156,10 @@ describe("rules and coins trainer", () => {
   ])("rejects invalid proposals without mutating settings: %j", async (patch) => {
     const h = harness({ answer: { ...answer, ...patch } }), before = structuredClone(h.cfg);
     await h.coach.tick(); expect(h.coach.state().entries[0]?.status).toBe("failed");
-    expect(h.cfg).toEqual(before); await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(1);
+    expect(h.cfg).toEqual(before);
+    const attempts = h.fetcher.mock.calls.length;
+    expect(attempts).toBeLessThanOrEqual(2);
+    await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(attempts);
   });
   it("allows coin-only updates and applies each cat's own coin whitelist", async () => {
     const h = harness({ answer: { ...answer, rules: loadConfig({}).slots.tiger.rules } });
@@ -238,6 +242,113 @@ describe("rules and coins trainer", () => {
   it("rejects the old threshold schema and enforces exact six-field output", () => {
     expect(CoachAnswer.safeParse(answer).success).toBe(true);
     expect(CoachAnswer.safeParse({ ...answer, change: null }).success).toBe(false);
+  });
+  it("repairs an invalid field once using the same evidence and applies only the valid replacement", async () => {
+    const h = harness();
+    h.fetcher.mockResolvedValueOnce(envelope({ ...answer, note: "Only one sentence." }));
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    const requests = h.fetcher.mock.calls.map(call => JSON.parse(String(call[1].body)));
+    expect(requests[1].messages[1]).toEqual(requests[0].messages[1]);
+    expect(requests[1].messages[2].content).toContain("note: Exactly two sentences");
+    expect(h.coach.state().entries).toHaveLength(1);
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(h.changed).toHaveBeenCalledTimes(1);
+  });
+  it("accepts fenced JSON and harmless typography without a second request", async () => {
+    const h = harness();
+    const formatted = { ...answer, rules: "Pick LONG_BTC when r1h_pct ≥ 0.5.\nPick WAIT otherwise.", quip: "DARK Wall-E, you’re patient—now check your signals." };
+    h.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: `\`\`\`json\n${JSON.stringify(formatted)}\n\`\`\`` } }] })));
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(1);
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(h.cfg.slots.tiger.rules).toBe("Pick LONG_BTC when r1h_pct >= 0.5. Pick WAIT otherwise.");
+  });
+  it("retries truncated output with more room and never applies the incomplete proposal", async () => {
+    const h = harness();
+    h.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: null } }] })));
+    await h.coach.tick();
+    const requests = h.fetcher.mock.calls.map(call => JSON.parse(String(call[1].body)));
+    expect(requests).toHaveLength(2);
+    expect(requests[1].max_tokens).toBeGreaterThan(requests[0].max_tokens);
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(h.changed).toHaveBeenCalledTimes(1);
+  });
+  it("preserves precise safe failure details across restart after one unsuccessful repair", async () => {
+    const h = harness({ answer: { ...answer, note: "One sentence.", "private-gateway-key": "secret provider body" } });
+    const before = coachValues(h.cfg, "tiger");
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    const state = new CatCoach({ ...h.deps, cfg: h.config() }).state();
+    expect(state.entries[0]).toMatchObject({ status: "failed", review: null });
+    expect(state.entries[0]?.error).toContain("note: Exactly two sentences");
+    expect(state.entries[0]?.error).toContain("automatic repair attempt also failed");
+    expect(JSON.stringify(state)).not.toMatch(/private-gateway-key|secret provider body/);
+    expect(String(h.fetcher.mock.calls[1]![1].body)).not.toMatch(/private-gateway-key|secret provider body/);
+    expect(coachValues(h.cfg, "tiger")).toEqual(before);
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["length", null, "output limit", 2],
+    ["stop", "{broken", "not valid JSON", 2],
+    ["content_filter", null, "completed review message", 1],
+  ])("reports the specific %s response failure without saving raw text", async (finish, content, error, attempts) => {
+    const h = harness();
+    h.fetcher.mockImplementation(async () => new Response(JSON.stringify({ choices: [{ finish_reason: finish, message: { content } }] })));
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(Number(attempts));
+    expect(h.coach.state().entries[0]?.error).toContain(String(error));
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it("checks the coin whitelist after repairing formatting", async () => {
+    const h = harness({ answer: { ...answer, coins: "BTC,NOTACOIN" } });
+    h.fetcher.mockResolvedValueOnce(envelope({ ...answer, note: "One sentence." }));
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    expect(h.coach.state().entries[0]?.status).toBe("failed");
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it("expires a malformed response instead of requesting a repair after settings change", async () => {
+    const h = harness();
+    h.fetcher.mockImplementationOnce(async () => {
+      h.cfg.slots.tiger.rules += " Keep waiting.";
+      return envelope({ ...answer, note: "One sentence." });
+    });
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(1);
+    expect(h.coach.state().entries[0]?.status).toBe("expired");
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it("excludes retired, unidentified and future observations from readiness and the review evidence", async () => {
+    const h = harness();
+    h.db.raw.exec(`UPDATE decisions SET audit_json=json_set(audit_json,'$.strategyVersion','catfolio-3-intraday'), status='old_strategy';
+      INSERT INTO orders(decision_id,bee,ts,cl_ord_id,inst_id,side,contracts,reduce_only,purpose,state)
+      SELECT id,bee,ts,'old-order','BTC','buy',1,0,'open','filled' FROM decisions ORDER BY id LIMIT 1;`);
+    observations(h.db, "tiger", h.now());
+    h.db.raw.exec("UPDATE decisions SET audit_json=json_remove(audit_json,'$.strategyVersion') WHERE status!='old_strategy'");
+    await h.coach.tick();
+    expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.coach.state().cats[0]?.observations).toBe(0);
+    observations(h.db, "tiger", h.now() + 2 * 3600000);
+    await h.coach.tick(); expect(h.fetcher).not.toHaveBeenCalled();
+    observations(h.db, "tiger", h.now());
+    h.db.raw.prepare(`UPDATE decisions SET audit_json=json_set(audit_json,'$.entryDiagnostics',json(?)) WHERE json_extract(audit_json,'$.strategyVersion')=?`).run(JSON.stringify([{coin:"BTC",blockers:["momentum_not_confirmed"]}]), STRATEGY_VERSION);
+    h.db.raw.prepare(`INSERT INTO orders(decision_id,bee,ts,cl_ord_id,inst_id,side,contracts,reduce_only,purpose,state)
+      SELECT id,bee,ts,'current-order','BTC','buy',1,0,'open','filled' FROM decisions WHERE ts<=? AND json_extract(audit_json,'$.strategyVersion')=? ORDER BY id DESC LIMIT 1`).run(h.now(), STRATEGY_VERSION);
+    await h.coach.tick();
+    const evidence = h.coach.state().entries[0]?.evidence;
+    expect(evidence).toMatchObject({ strategyVersions:[STRATEGY_VERSION], excludedObservations:62,
+      summary:{decisions:31,waits:31}, entries:{count:1}, blockers:[{reason:"momentum_not_confirmed",decisions:31}] });
+    expect(JSON.stringify(evidence)).not.toMatch(/minTrendScore|old_strategy/);
+  });
+  it("retains Good's compatible source-engine observations but excludes Dark's old breakout observations", async () => {
+    const h = harness(); observations(h.db,"mochi",h.now());
+    h.db.raw.exec("UPDATE decisions SET audit_json=json_set(audit_json,'$.strategyVersion','catfolio-5-source-engine')");
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(1);
+    expect(h.coach.state().entries[0]?.cat).toBe("mochi");
+    expect(h.coach.state().cats[0]?.observations).toBe(0);
+    expect(h.coach.state().cats[1]?.observations).toBe(31);
   });
   it("publishes automatic decisions and still requires owner authorization to restore originals", async () => {
     const h = harness(); await h.coach.tick();

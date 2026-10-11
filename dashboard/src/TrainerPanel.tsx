@@ -88,8 +88,10 @@ export function TrainerPanel({ state, names, connected }: { state?: CoachState; 
         {detailedReview ? <><h3>{detailedReview.idea}</h3><blockquote>“{detailedReview.quip}”</blockquote><p>{detailedReview.reason}</p><p>{detailedReview.note}</p>
           <h4>Reviewed rules</h4><p>{detailedReview.rules}</p><p>Coins: {detailedReview.coins ? detailedReview.coins.split(",").join(" · ") : "All baseline allowed coins"}</p></> : <p>{detail.error ?? (detail.review && "diagnosis" in detail.review ? detail.review.diagnosis : "Review in progress.")}</p>}
         {detail.evidence?.summary && <p>{detail.evidence.summary.decisions} observations · {detail.evidence.summary.waits ?? 0} waits · {detail.evidence.summary.holds ?? 0} holds · {detail.evidence.entries?.count ?? "—"} filled entries · {detail.evidence.summary.modelFailures ?? 0} model errors</p>}
+        {detail.evidence?.strategyVersions && <p className="muted">Evidence uses compatible strategy history only. {detail.evidence.excludedObservations ?? 0} observations from retired or unidentified strategies excluded.</p>}
+        {!detail.evidence?.strategyVersions && <p className="muted">Historical review: this evidence may include earlier strategy versions.</p>}
         {!!detail.evidence?.blockers?.length && <ul>{detail.evidence.blockers.map(b => <li key={b.reason}>{b.reason.replaceAll("_", " ")}: {b.decisions} observations</li>)}</ul>}
-        {detail.evidence?.current?.diagnostics && <details><summary>Market evidence used for this review</summary><Diagnostics diagnostics={detail.evidence.current.diagnostics}/></details>}
+        {!!detail.evidence?.current?.diagnostics?.length && <details><summary>Market evidence used for this review</summary><Diagnostics diagnostics={detail.evidence.current.diagnostics}/></details>}
       </section>}
       <h3>Current strategy data{!connected ? " · offline snapshot" : ""}</h3>
       {state?.cats.map(cat => <section className="trainer-current-detail" key={cat.cat}><h3>{names[cat.cat]}</h3>

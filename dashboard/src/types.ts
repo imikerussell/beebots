@@ -143,7 +143,7 @@ export interface CoachEntry {
   completedAt: number | null; resolvedAt: number | null; error: string | null;
   review: { diagnosis: string; rationale: string; tradeoff: string;
     change: { field: CoachField; from: number; to: number } | null } | TrainerReview | null;
-  evidence: { current?: CoachContext; entries?: { count: number }; summary: { decisions: number; waitOnly?: number; waits: number; holds: number; modelFailures: number };
+  evidence: { current?: CoachContext; strategyVersions?: string[]; excludedObservations?: number; entries?: { count: number }; summary: { decisions: number; waitOnly?: number; waits: number; holds: number; modelFailures: number };
     blockers: Array<{ reason: string; decisions: number }> };
 }
 export interface CoachState {

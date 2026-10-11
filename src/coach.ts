@@ -19,11 +19,17 @@ export const COACH_ERRORS: Record<string, string> = {
   timeout: "The review provider did not finish within 60 seconds.",
   connection: "The engine could not complete its connection to the review provider.",
   invalid_response: "The model returned an incomplete or invalid structured review.",
+  response_truncated: "The review reached the provider's output limit before it was complete.",
+  response_envelope: "The provider did not return a completed review message.",
+  response_json: "The review message was not valid JSON.",
+  response_schema: "The review did not meet the required field format.",
   invalid_change: "The proposed change did not pass the allowed bounds or settings checks.",
   unsupported_change: "The proposed change was not supported by the recorded entry blockers.",
   position_open: "The cat holds a position; the proposed entry change was not offered for approval.",
 };
-class CoachReviewError extends Error {}
+class CoachReviewError extends Error {
+  constructor(code: string, readonly detail: string | null = null) { super(code); }
+}
 export const CoachField = z.enum(["minTrendScore", "minActionProbability", "minConviction"]);
 export type CoachField = z.infer<typeof CoachField>;
 const Patch = z.object({ field: CoachField, from: z.number().finite(), to: z.number().finite() }).strict();
@@ -35,6 +41,14 @@ const LegacyCoachAnswer = z.object({
 }).strict();
 const sentences = (text: string) => text.trim().split(/(?<=[.!?])\s+(?=[A-Z])/).filter(Boolean).length;
 const ascii = (max: number) => z.string().trim().min(1).max(max).regex(/^[\x20-\x7E]+$/);
+const FIELD_FORMATS = {
+  idea: "A nonempty idea name, at most 80 characters.",
+  rules: "2 to 4 sentences, plain ASCII, at most 400 characters; no literal prices or dates.",
+  coins: "Uppercase coin symbols separated by commas, at most 80 characters; empty means all allowed coins.",
+  reason: "Exactly one nonempty sentence, at most 200 characters.",
+  quip: "A nonempty plain ASCII line, at most 90 characters, with the cat's display name; no quotation marks or hashtags.",
+  note: "Exactly two sentences, at most 800 characters.",
+};
 export const CoachAnswer = z.object({
   idea: z.string().trim().min(1).max(80),
   rules: ascii(400).refine(s => sentences(s) >= 2 && sentences(s) <= 4, "Use 2 to 4 sentences")
@@ -49,10 +63,46 @@ const RESPONSE_FORMAT = {
   json_schema: { name: "cat_coach_rules", strict: true, schema: {
     type: "object", additionalProperties: false,
     required: ["idea", "rules", "coins", "reason", "quip", "note"],
-    properties: Object.fromEntries(["idea", "rules", "coins", "reason", "quip", "note"].map(key => [key, { type: "string" }])),
+    properties: Object.fromEntries(Object.entries(FIELD_FORMATS).map(([key, description]) => [key, { type: "string", description }])),
   } },
 };
 type Answer = z.infer<typeof CoachAnswer>;
+/** Only publish fixed field descriptions, never provider text, unknown keys or Zod messages. */
+function responseFormatError(error: z.ZodError): CoachReviewError {
+  const fields = [...new Set(error.issues.map(issue => issue.path[0]))];
+  const detail = fields.map(field => typeof field === "string" && Object.hasOwn(FIELD_FORMATS, field)
+    ? `${field}: ${FIELD_FORMATS[field as keyof typeof FIELD_FORMATS]}`
+    : "Return exactly idea, rules, coins, reason, quip and note, all as strings.").join(" ");
+  return new CoachReviewError("response_schema", detail);
+}
+function parseReview(body: string): Answer {
+  if (body.length > 100_000) throw new CoachReviewError("response_envelope");
+  let envelope: unknown;
+  try { envelope = JSON.parse(body); } catch { throw new CoachReviewError("response_envelope"); }
+  const parsed = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().nullable() }), finish_reason: z.string() })).min(1) }).safeParse(envelope);
+  if (!parsed.success) throw new CoachReviewError("response_envelope");
+  const choice = parsed.data.choices[0]!;
+  if (choice.finish_reason === "length") throw new CoachReviewError("response_truncated");
+  if (choice.finish_reason !== "stop" || choice.message.content === null) throw new CoachReviewError("response_envelope");
+  let value: unknown;
+  // An enclosing JSON fence and typographic punctuation do not change the proposed rules.
+  const content = choice.message.content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, "$1");
+  try { value = JSON.parse(content); } catch { throw new CoachReviewError("response_json"); }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const fields = value as Record<string, unknown>;
+    for (const field of Object.keys(FIELD_FORMATS)) {
+      if (typeof fields[field] === "string") fields[field] = redactString(fields[field]
+        .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
+        .replace(/[\u2013\u2014]/g, "-").replace(/\u2265/g, ">=").replace(/\u2264/g, "<=").replace(/\s+/g, " ").trim());
+    }
+  }
+  const review = CoachAnswer.safeParse(value);
+  if (!review.success) throw responseFormatError(review.error);
+  return review.data;
+}
+// Good's source brain was unchanged by the active-momentum upgrade; older engines differ.
+const evidenceVersions = (cat: BeeId) => cat === "mochi" ? [STRATEGY_VERSION, "catfolio-5-source-engine"] : [STRATEGY_VERSION];
+const versionFilter = "json_extract(audit_json,'$.strategyVersion') IN (SELECT value FROM json_each(?))";
 type LegacyAnswer = z.infer<typeof LegacyCoachAnswer>;
 const SavedCoachAnswer = z.union([CoachAnswer, LegacyCoachAnswer]);
 type Values = { rules: string; coins: string[] };
@@ -66,7 +116,7 @@ export interface CoachEntry {
   status: "reviewing" | "pending" | "accepted" | "declined" | "no_change" | "failed" | "expired" | "rolled_back";
   model: string; review: Answer | LegacyAnswer | null; evidence: unknown; resolvedAt: number | null; completedAt: number | null; error: string | null;
 }
-interface Row { id: number; cat: BeeId; day: string; created_at: number; status: CoachEntry["status"]; model: string; review: string | null; evidence: string; revision: string; resolved_at: number | null; completed_at: number | null; error_code: string | null }
+interface Row { id: number; cat: BeeId; day: string; created_at: number; status: CoachEntry["status"]; model: string; review: string | null; evidence: string; revision: string; resolved_at: number | null; completed_at: number | null; error_code: string | null; error_detail: string | null }
 export class CoachConflict extends Error {}
 export interface CoachDeps {
   cfg: Config; db: Db;
@@ -97,7 +147,7 @@ export class CatCoach {
       CREATE TABLE IF NOT EXISTS coach_overrides (cat TEXT PRIMARY KEY, review_id INTEGER NOT NULL, values_json TEXT NOT NULL, baseline_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS coach_rule_overrides (cat TEXT PRIMARY KEY, review_id INTEGER NOT NULL, values_json TEXT NOT NULL, baseline_json TEXT NOT NULL);`);
     const columns = d.db.raw.prepare("PRAGMA table_info(coach_reviews)").all() as Array<{ name: string }>;
-    for (const [name, definition] of [["completed_at", "INTEGER"], ["error_code", "TEXT"]])
+    for (const [name, definition] of [["completed_at", "INTEGER"], ["error_code", "TEXT"], ["error_detail", "TEXT"]])
       if (!columns.some((column) => column.name === name)) d.db.raw.exec(`ALTER TABLE coach_reviews ADD COLUMN ${name} ${definition}`);
     // Preserve review IDs/history while removing the old UTC-day uniqueness constraint.
     const schema = d.db.raw.prepare("SELECT sql FROM sqlite_master WHERE name='coach_reviews'").get() as { sql: string };
@@ -105,8 +155,8 @@ export class CatCoach {
       d.db.raw.exec(`CREATE TABLE coach_reviews_v2 (
         id INTEGER PRIMARY KEY, cat TEXT NOT NULL, day TEXT NOT NULL, created_at INTEGER NOT NULL,
         status TEXT NOT NULL, model TEXT NOT NULL, review TEXT, evidence TEXT NOT NULL,
-        revision TEXT NOT NULL, resolved_at INTEGER, completed_at INTEGER, error_code TEXT, UNIQUE(cat,created_at));
-        INSERT INTO coach_reviews_v2 SELECT id,cat,day,created_at,status,model,review,evidence,revision,resolved_at,completed_at,error_code FROM coach_reviews;
+        revision TEXT NOT NULL, resolved_at INTEGER, completed_at INTEGER, error_code TEXT, error_detail TEXT, UNIQUE(cat,created_at));
+        INSERT INTO coach_reviews_v2 SELECT id,cat,day,created_at,status,model,review,evidence,revision,resolved_at,completed_at,error_code,error_detail FROM coach_reviews;
         DROP TABLE coach_reviews; ALTER TABLE coach_reviews_v2 RENAME TO coach_reviews;`);
     });
     // Old threshold proposals remain history, but can no longer mutate the engine.
@@ -177,14 +227,14 @@ export class CatCoach {
         };
       }),
       entries: this.rows().map((r): CoachEntry => ({ id: r.id, cat: r.cat, day: r.day, createdAt: r.created_at, expiresAt: r.created_at + DAY, status: r.status, model: r.model,
-        review: r.review ? SavedCoachAnswer.parse(JSON.parse(r.review)) : null, evidence: JSON.parse(r.evidence), resolvedAt: r.resolved_at, completedAt: r.completed_at, error: r.error_code ? COACH_ERRORS[r.error_code] ?? "The review could not be completed." : null })),
+        review: r.review ? SavedCoachAnswer.parse(JSON.parse(r.review)) : null, evidence: JSON.parse(r.evidence), resolvedAt: r.resolved_at, completedAt: r.completed_at, error: r.error_code ? [COACH_ERRORS[r.error_code] ?? "The review could not be completed.", r.error_detail].filter(Boolean).join(" ") : null })),
     };
   }
   /** The dashboard and scheduler share evidence and rolling cooldown checks. */
   private readiness(cat: BeeId, now: number, last?: Row) {
     const summary = this.d.db.raw.prepare(`SELECT COUNT(*) AS decisions, MIN(ts) AS firstAt
-      FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND json_extract(audit_json,'$.source') IN ('model_request','rules')`)
-      .get(cat, now - DAY, now) as { decisions: number; firstAt: number | null };
+      FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND ${versionFilter} AND json_extract(audit_json,'$.source') IN ('model_request','rules')`)
+      .get(cat, now - DAY, now, JSON.stringify(evidenceVersions(cat))) as { decisions: number; firstAt: number | null };
     const observedMs = summary.firstAt === null ? 0 : Math.max(0, now - summary.firstAt);
     const accepted = this.d.db.raw.prepare("SELECT MAX(resolved_at) AS at FROM coach_reviews WHERE cat=? AND status IN ('accepted','rolled_back')").get(cat) as { at: number | null };
     const cooldownUntil = last ? Math.max(last.created_at + COACH_INTERVAL_MS, accepted.at === null ? 0 : accepted.at + COACH_INTERVAL_MS) : null;
@@ -195,6 +245,7 @@ export class CatCoach {
   }
   private evidence(cat: BeeId, now: number) {
     const db = this.d.db.raw, since = now - DAY;
+    const strategyVersions = evidenceVersions(cat), versions = JSON.stringify(strategyVersions);
     const summary = db.prepare(`SELECT COUNT(*) AS decisions, MIN(ts) AS firstAt,
       SUM(CASE WHEN choice='WAIT' OR (choice IS NULL AND (SELECT COUNT(*) FROM json_each(menu_json))=0) THEN 1 ELSE 0 END) AS waits,
       SUM(CASE WHEN choice IN ('HOLD','HOLD_WINNER') THEN 1 ELSE 0 END) AS holds,
@@ -202,17 +253,20 @@ export class CatCoach {
       SUM(CASE WHEN (vetoed_by='weak_or_invalid_conviction' OR vetoed_by LIKE 'weak_conviction %') AND conviction<COALESCE(json_extract(audit_json,'$.config.openGate.minConviction'),json_extract(audit_json,'$.config.limits.minConviction')) THEN 1 ELSE 0 END) AS weakConviction,
       SUM(CASE WHEN (vetoed_by='weak_or_invalid_conviction' OR vetoed_by LIKE 'weak_conviction %') AND json_extract(probabilities_json,'$.' || choice)<COALESCE(json_extract(audit_json,'$.config.openGate.minProb'),json_extract(audit_json,'$.config.limits.minActionProbability')) THEN 1 ELSE 0 END) AS weakProbability,
       SUM(CASE WHEN jev_error IS NOT NULL THEN 1 ELSE 0 END) AS modelFailures
-      FROM decisions WHERE bee=? AND ts>=? AND json_extract(audit_json,'$.source') IN ('model_request','rules')`).get(cat, since) as { decisions: number; firstAt: number | null; waits: number; holds: number; waitOnly: number; weakConviction: number; weakProbability: number; modelFailures: number };
-    const outcomes = db.prepare(`SELECT status, vetoed_by AS veto, COUNT(*) AS count FROM decisions WHERE bee=? AND ts>=? GROUP BY status,vetoed_by ORDER BY count DESC LIMIT 30`).all(cat, since);
+      FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND ${versionFilter} AND json_extract(audit_json,'$.source') IN ('model_request','rules')`).get(cat, since, now, versions) as { decisions: number; firstAt: number | null; waits: number; holds: number; waitOnly: number; weakConviction: number; weakProbability: number; modelFailures: number };
+    const outcomes = db.prepare(`SELECT status, vetoed_by AS veto, COUNT(*) AS count FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND ${versionFilter} GROUP BY status,vetoed_by ORDER BY count DESC LIMIT 30`).all(cat, since, now, versions);
     const blockers = db.prepare(`SELECT b.value AS reason, COUNT(DISTINCT d.id) AS decisions
       FROM decisions d, json_each(d.audit_json,'$.entryDiagnostics') c, json_each(c.value,'$.blockers') b
-      WHERE d.bee=? AND d.ts>=? AND json_extract(d.audit_json,'$.source') IN ('model_request','rules')
-      GROUP BY b.value ORDER BY decisions DESC`).all(cat, since);
+      WHERE d.bee=? AND d.ts>=? AND d.ts<=? AND ${versionFilter} AND json_extract(d.audit_json,'$.source') IN ('model_request','rules')
+      GROUP BY b.value ORDER BY decisions DESC`).all(cat, since, now, versions);
     const recent = db.prepare(`SELECT ts, choice, status, vetoed_by AS veto, conviction,
       json_extract(audit_json,'$.entryDiagnostics') AS diagnostics
-      FROM decisions WHERE bee=? AND ts>=? AND json_extract(audit_json,'$.source') IN ('model_request','rules') ORDER BY id DESC LIMIT 12`).all(cat, since);
-    const entries = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE bee=? AND ts>=? AND purpose='open' AND state='filled'").get(cat, since);
-    return { since, until: now, summary, outcomes, blockers, recent, entries, current: this.d.context(cat) };
+      FROM decisions WHERE bee=? AND ts>=? AND ts<=? AND ${versionFilter} AND json_extract(audit_json,'$.source') IN ('model_request','rules') ORDER BY id DESC LIMIT 12`).all(cat, since, now, versions);
+    const entries = db.prepare(`SELECT COUNT(*) AS count FROM orders o JOIN decisions d ON d.id=o.decision_id AND d.bee=o.bee
+      WHERE o.bee=? AND o.ts>=? AND o.ts<=? AND ${versionFilter} AND o.purpose='open' AND o.state='filled'`).get(cat, since, now, versions);
+    const excluded = db.prepare(`SELECT COUNT(*) AS count FROM decisions WHERE bee=? AND ts>=? AND ts<=?
+      AND json_extract(audit_json,'$.source') IN ('model_request','rules') AND COALESCE((${versionFilter}),0)=0`).get(cat, since, now, versions) as { count: number };
+    return { since, until: now, strategyVersions, excludedObservations: excluded.count, summary, outcomes, blockers, recent, entries, current: this.d.context(cat) };
   }
   tick(): Promise<void> {
     if (this.running) return this.running;
@@ -238,29 +292,39 @@ export class CatCoach {
       const id = Number(result.lastInsertRowid);
       let stage: "request" | "response" | "change" = "request";
       try {
-        const response = await this.fetcher("https://ai-gateway.vercel.sh/v1/chat/completions", {
-          method: "POST", redirect: "error", signal: AbortSignal.timeout(60_000),
-          headers: { "content-type": "application/json", authorization: `Bearer ${cfg.coach.apiKey}` },
-          body: JSON.stringify({ model: cfg.coach.model, max_tokens: 1400, response_format: RESPONSE_FORMAT,
-            messages: [
-              { role: "system", content: TRAINER_PROMPT },
-              { role: "user", content: JSON.stringify({ cat: { id: cat, name: displayName(cfg, cat), current: coachValues(cfg, cat), allowedCoins: this.baseline[cat].coins },
-                decisionIntervalMs: cfg.tickMs, playbook: trainerPlaybook(cfg),
-                scorecard: CATS.map(id => ({ cat: id, name: displayName(cfg, id), current: coachValues(cfg, id), evidence: id === cat ? evidence : this.evidence(id, now) })),
-                viewerCats: null, universe: this.d.universe?.() ?? { available: false },
-              }) },
-            ] }),
-        });
-        if (!response.ok) throw new CoachReviewError(response.status === 401 || response.status === 403 ? "gateway_auth"
-          : response.status === 402 ? "gateway_credit" : response.status === 429 ? "gateway_rate_limit" : "gateway_failed");
-        stage = "response";
-        const body = await response.text();
-        if (body.length > 100_000) throw new CoachReviewError("invalid_response");
-        const envelope = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string() }), finish_reason: z.string() })).min(1) }).parse(JSON.parse(body));
-        if (envelope.choices[0]!.finish_reason !== "stop") throw new CoachReviewError("invalid_response");
-        const review = CoachAnswer.parse(JSON.parse(envelope.choices[0]!.message.content));
-        for (const key of ["idea", "rules", "coins", "reason", "quip", "note"] as const) review[key] = redactString(review[key]);
-        CoachAnswer.parse(review);
+        const messages = [
+          { role: "system", content: TRAINER_PROMPT },
+          { role: "user", content: JSON.stringify({ cat: { id: cat, name: displayName(cfg, cat), current: coachValues(cfg, cat), allowedCoins: this.baseline[cat].coins },
+            decisionIntervalMs: cfg.tickMs, playbook: trainerPlaybook(cfg),
+            scorecard: CATS.map(id => ({ cat: id, name: displayName(cfg, id), current: coachValues(cfg, id), evidence: id === cat ? evidence : this.evidence(id, now) })),
+            viewerCats: null, universe: this.d.universe?.() ?? { available: false },
+          }) },
+        ];
+        let review: Answer | undefined;
+        // One repair within the same review, never an unbounded provider retry loop.
+        const signal = AbortSignal.timeout(60_000);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          stage = "request";
+          const response = await this.fetcher("https://ai-gateway.vercel.sh/v1/chat/completions", {
+            method: "POST", redirect: "error", signal,
+            headers: { "content-type": "application/json", authorization: `Bearer ${cfg.coach.apiKey}` },
+            body: JSON.stringify({ model: cfg.coach.model, max_tokens: attempt === 0 ? 2000 : 3200, response_format: RESPONSE_FORMAT, messages }),
+          });
+          if (!response.ok) throw new CoachReviewError(response.status === 401 || response.status === 403 ? "gateway_auth"
+            : response.status === 402 ? "gateway_credit" : response.status === 429 ? "gateway_rate_limit" : "gateway_failed");
+          stage = "response";
+          try { review = parseReview(await response.text()); break; }
+          catch (err) {
+            if (!(err instanceof CoachReviewError) || !["response_truncated", "response_json", "response_schema"].includes(err.message)) throw err;
+            if (attempt === 1) throw new CoachReviewError(err.message, [err.detail, "The automatic repair attempt also failed; no changes were applied."].filter(Boolean).join(" "));
+            if (this.stopped || this.d.closed() || revision !== coachRevision(cfg, cat)) {
+              db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=?,completed_at=? WHERE id=?").run(this.now(), this.now(), id);
+              break;
+            }
+            messages.push({ role: "user", content: `Your response failed validation: ${COACH_ERRORS[err.message]} ${err.detail ?? ""} Return a complete replacement JSON object using the original evidence and the six required fields. Keep it concise. Do not add fields or surrounding prose.` });
+          }
+        }
+        if (!review) continue;
         stage = "change";
         const values = this.validate(cat, review);
         const current = coachValues(cfg, cat);
@@ -278,7 +342,7 @@ export class CatCoach {
         const code = err instanceof CoachReviewError ? err.message
           : err instanceof Error && ["TimeoutError", "AbortError"].includes(err.name) ? "timeout"
           : stage === "request" ? "connection" : stage === "response" ? "invalid_response" : "invalid_change";
-        db.raw.prepare("UPDATE coach_reviews SET status='failed', resolved_at=?, completed_at=?, error_code=? WHERE id=?").run(this.now(), this.now(), code, id);
+        db.raw.prepare("UPDATE coach_reviews SET status='failed', resolved_at=?, completed_at=?, error_code=?, error_detail=? WHERE id=?").run(this.now(), this.now(), code, err instanceof CoachReviewError ? err.detail : null, id);
       }
     }
   }
