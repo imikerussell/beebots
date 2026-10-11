@@ -1,5 +1,5 @@
 import { TrainerPanel } from "./TrainerPanel";
-import { ModelIssue } from "./ModelIssue";
+import { EngineStatus } from "./EngineStatus";
 import { DecisionStream } from "./DecisionStream";
 import { useState } from "react";
 import { MorningReport, type Report } from "./MorningReport";
@@ -141,98 +141,7 @@ export function App() {
             intervalMs={snap?.decisionIntervalMs}
             closed={!!snap?.closed}
           />
-          <section className="model-panel">
-            <div className="section-title">
-              <span className="eyebrow">THE BRAIN</span>
-              <span
-                className={`model-status ${connected && snap?.inference.connected ? "positive" : "muted"}`}
-              >
-                <i
-                  className={`light ${connected && snap?.inference.connected ? "on" : ""}`}
-                />
-                {!connected
-                  ? "Status unknown"
-                  : snap?.inference.error
-                    ? "Decision issue"
-                    : snap?.inference.connected
-                      ? "Connected"
-                      : snap?.inference.requests === 0
-                        ? "Not called yet"
-                        : "Awaiting response"}
-              </span>
-            </div>
-            <h3>{snap?.inference.provider ?? "Decision engine"}</h3>
-            <p className="model-name">
-              {snap?.inference.model || "No model connected"}
-            </p>
-            <dl className="model-stats">
-              <div>
-                <dt>Requests</dt>
-                <dd>{snap?.inference.requests ?? "—"}</dd>
-              </div>
-              <div>
-                <dt>Latency</dt>
-                <dd>
-                  {snap?.inference.latencyMs == null
-                    ? "—"
-                    : `${snap.inference.latencyMs} ms`}
-                </dd>
-              </div>
-              <div>
-                <dt>Failures</dt>
-                <dd className={snap?.inference.failures ? "negative" : ""}>
-                  {snap?.inference.failures ?? "—"}
-                </dd>
-              </div>
-            </dl>
-            {connected &&
-              snap &&
-              !snap.inference.error &&
-              !snap.inference.connected &&
-              snap.inference.requests === 0 && (
-                <p className="model-idle">
-                  No model request has been made since this engine started. When
-                  WAIT or HOLD is the only available action, the rules handle it
-                  without calling the model. Connectivity has not been tested
-                  yet.
-                </p>
-              )}
-            {snap?.inference.error && (
-              <ModelIssue
-                error={snap.inference.error}
-                connected={connected}
-                closed={!!snap.closed}
-              />
-            )}
-            {snap?.inference.estimatedSpentTodayUsd !== undefined && (
-              <p className="muted">
-                API usage today: {usd(snap.inference.estimatedSpentTodayUsd)} /{" "}
-                {usd(snap.inference.dailyUsdCap ?? 0)} · billed separately
-              </p>
-            )}
-            <div className="model-footnote">
-              Two strategies. One selected model.
-            </div>
-          </section>
-          <section className="rhythm-panel">
-            <span className="eyebrow">THE RHYTHM</span>
-            <div>
-              <span>Decision interval</span>
-              <b>{snap ? `${snap.decisionIntervalMs / 1000}s` : "—"}</b>
-            </div>
-            <div>
-              <span>Protective checks</span>
-              <b>{snap ? `${snap.protectiveIntervalMs / 1000}s` : "—"}</b>
-            </div>
-            <div>
-              <span>Market updated</span>
-              <b>
-                {snap?.market.refreshedAt
-                  ? new Date(snap.market.refreshedAt).toLocaleTimeString()
-                  : "—"}
-              </b>
-            </div>
-          </section>
+          <EngineStatus snap={snap} connected={connected} />
         </aside>
       </div>
       {report !== null && (
@@ -246,17 +155,8 @@ export function App() {
         <span className="footer-brand">
           catfolio<span>.</span>
         </span>
-        <p>
-          Paper fills simulate spread, fees and adverse slippage. Stop-distance
-          risk is an estimate, not a guaranteed loss limit. One profitable night
-          does not establish a durable advantage.
-          <br />A fork of{" "}
-          <a href="https://github.com/imikerussell/beebots">
-            beebots by Mike Russell
-          </a>{" "}
-          · MIT license · No investment advice.
-        </p>
-        <span className="footer-note">BUILT FOR CURIOSITY.</span>
+        <p>Paper fills include simulated costs · Experimental strategies</p>
+        <span className="footer-note">Based on <a href="https://github.com/imikerussell/beebots">beebots</a> · MIT · No investment advice</span>
       </footer>
     </main>
   );

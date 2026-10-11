@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { CAT_IDS } from "./CatCard";
 import { DECISION_LIMIT, decisionKey } from "./decisionFeed";
 import { dataBlocked, entryExplanations } from "./entryDiagnostics";
@@ -57,9 +57,13 @@ function actionNote(d: Decision) {
 function DecisionRow({
   decision: d,
   name,
+  inspect,
+  expanded = false,
 }: {
   decision: Decision;
   name: string;
+  inspect?: () => void;
+  expanded?: boolean;
 }) {
   const options = Object.entries(d.probabilities ?? {})
     .filter(([, p]) => Number.isFinite(p) && p >= 0 && p <= 1)
@@ -80,6 +84,12 @@ function DecisionRow({
         : d.source === "rules"
           ? d.entryDiagnostics?.some(dataBlocked) ? "Market data issue · entry checks incomplete" : "No qualifying entry"
           : "Decision details";
+  if (inspect) return <li className={`stream-row stream-preview-row ${d.bee}`} data-decision-key={decisionKey(d)}>
+    <button onClick={inspect} aria-label={`${name}: ${d.choice ?? "No model action"}. Open decision details`}>
+      <span className="stream-preview-head"><strong className="stream-cat"><i aria-hidden="true" />{name}</strong><strong className="stream-choice">{d.choice ?? (d.error ? "MODEL ERROR" : "PROTECTION")}</strong><time>{new Date(d.ts).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}</time></span>
+      <span className={`stream-preview-note ${d.error || d.vetoedBy ? "negative" : ""}`}>{summary === "Decision details" ? actionNote(d) : summary}<span aria-hidden="true">↗</span></span>
+    </button>
+  </li>;
   return (
     <li className={`stream-row ${d.bee}`} data-decision-key={decisionKey(d)}>
       <div className="stream-row-head">
@@ -141,7 +151,7 @@ function DecisionRow({
           ))}
         </div>
       )}
-      <details className="stream-details">
+      <details className="stream-details" open={expanded || undefined}>
         <summary className={d.vetoedBy || d.error ? "negative" : ""}>
           <span className="stream-detail-label">
             {!showOptions && (
@@ -202,6 +212,7 @@ export function DecisionStream({
   historyStatus,
   intervalMs,
   closed,
+  expanded = false,
 }: {
   decisions: Decision[];
   liveDecisionKeys: string[];
@@ -210,7 +221,13 @@ export function DecisionStream({
   historyStatus: "loading" | "loaded" | "unavailable";
   intervalMs?: number;
   closed: boolean;
+  expanded?: boolean;
 }) {
+  const titleId = useId();
+  const historyDialog = useRef<HTMLDialogElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [inspected, setInspected] = useState<Decision | null>(null);
+  const inspect = (decision: Decision | null) => { setInspected(decision); setHistoryOpen(true); historyDialog.current?.showModal(); };
   const [filter, setFilter] = useState<CatId | "all">("all");
   const [paused, setPaused] = useState<Decision[] | null>(null);
   const [now, setNow] = useState(Date.now);
@@ -269,11 +286,11 @@ export function DecisionStream({
   const age = last ? Math.max(0, Math.floor((now - last.ts) / 1000)) : null;
   return (
     <section
-      className="decision-stream"
-      aria-labelledby="decision-stream-title"
+      className={`decision-stream ${expanded ? "stream-expanded" : "stream-preview"}`}
+      aria-labelledby={titleId}
     >
       <div className="stream-heading">
-        <h2 id="decision-stream-title">Decision stream</h2>
+        <h2 id={titleId}>Decision stream</h2>
         <span
           className={`stream-connection ${streamStatus === "live" ? "positive" : "muted"}`}
           role="status"
@@ -335,11 +352,12 @@ export function DecisionStream({
           aria-label="Recorded decisions, newest first"
           tabIndex={0}
         >
-          {rows.map((d) => (
+          {(expanded ? rows : rows.slice(0, 2)).map((d) => (
             <DecisionRow
               key={decisionKey(d)}
               decision={d}
               name={names[d.bee]}
+              inspect={expanded ? undefined : () => inspect(d)}
             />
           ))}
         </ol>
@@ -351,9 +369,13 @@ export function DecisionStream({
           WAITs, HOLDs, blocked actions and model failures all appear here.
         </p>
       )}
-      <p className="stream-footer">
-        Latest {DECISION_LIMIT} · Action probabilities, not profit odds.
-      </p>
+      {expanded ? <p className="stream-footer">Latest {DECISION_LIMIT} · Action probabilities, not profit odds.</p> : <>
+        <button className="stream-history-button" onClick={() => inspect(null)}>Decision history <span>{rows.length} recorded →</span></button>
+        <dialog ref={historyDialog} onClose={() => setHistoryOpen(false)} className="dashboard-dialog" aria-label="Recorded decisions" onClick={event => { if (event.target === historyDialog.current) historyDialog.current.close(); }}>
+          <header><h2>{inspected ? `${names[inspected.bee]} · decision` : "Recorded decisions"}</h2><button aria-label="Close decision details" onClick={() => historyDialog.current?.close()}>×</button></header>
+          {historyOpen && (inspected ? <ol className="inspected-decision"><DecisionRow decision={inspected} name={names[inspected.bee]} expanded /></ol> : <DecisionStream decisions={decisions} liveDecisionKeys={liveDecisionKeys} names={names} streamStatus={streamStatus} historyStatus={historyStatus} intervalMs={intervalMs} closed={closed} expanded />)}
+        </dialog>
+      </>}
     </section>
   );
 }

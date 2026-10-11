@@ -1477,3 +1477,150 @@ dialog details {
 @media (max-width: 500px) { .trainer-panel { padding: 14px; } .trainer-markets { grid-template-columns: 1fr; } .trainer-detail-dialog { padding: 18px; } }
 
 @media (max-width: 950px) { .trainer-panel { grid-column: 1 / -1; } }
+
+/* Keep the overview compact; longer histories and explanations live in dialogs. */
+.trainer-panel { padding: 12px; border-radius: 10px; }
+.trainer-panel-heading { gap: 8px; margin-bottom: 9px; }
+.trainer-emblem { width: 30px; height: 30px; font-size: 16px; flex-shrink: 0; }
+.trainer-panel-heading h2 { font-size: 12px; letter-spacing: 1.4px; }
+.trainer-panel-heading p { font-size: 10px; margin-top: 2px; }
+.trainer-next { font-size: 9px; }
+.trainer-next strong { margin-top: 2px; font-size: 11px; }
+.trainer-feature { gap: 8px; padding: 9px; border-radius: 7px; }
+.trainer-feature > div { min-width: 0; flex: 1; }
+.trainer-feature img { width: 30px; height: 30px; flex-shrink: 0; }
+.trainer-feature blockquote { font-size: 12px; line-height: 1.4; margin-bottom: 4px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.trainer-feature strong { font-size: 10px; }
+.trainer-feature time { display: block; font-size: 9px; margin-top: 3px; }
+.trainer-feature p { font-size: 11px; margin: 4px 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+.trainer-live-label { margin: 9px 0 3px; font-size: 10px; }
+.trainer-live-label span { font-size: 9px; }
+.trainer-watch { align-items: center; gap: 7px; padding: 7px 0; }
+.trainer-watch > img { width: 22px; height: 22px; flex-shrink: 0; }
+.trainer-watch strong { font-size: 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trainer-watch .trainer-watch-status { margin-left: auto; color: #c2c6d0; font-size: 10px; white-space: nowrap; }
+.trainer-read-more, .stream-history-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 6px 8px; margin-top: 6px; border-radius: 5px; font-size: 10px; }
+.trainer-read-more span, .stream-history-button span { font-size: 9px; font-weight: 400; }
+.trainer-empty { padding: 9px; }
+.trainer-empty strong { font-size: 12px; }
+.trainer-empty p, .trainer-caution { font-size: 10px; line-height: 1.4; }
+.trainer-caution { margin-bottom: 6px; }
+.engine-status { display: grid; gap: 5px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); padding: 10px 12px; }
+.engine-status-heading, .engine-status-stats { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 10px; }
+.engine-status > strong { font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.engine-status-stats { justify-content: flex-start; font-size: 10px; color: var(--muted); }
+.engine-status-stats > span:last-child { margin-left: auto; }
+.dashboard-dialog { width: min(760px, calc(100vw - 32px)); overflow-wrap: anywhere; }
+.dashboard-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.dashboard-dialog > header h2 { font-size: 20px; }
+.dashboard-dialog > header button { font-size: 22px; padding: 3px 10px; }
+.dashboard-dialog .model-stats { margin: 20px 0; }
+.dashboard-dialog::backdrop { background: #0009; backdrop-filter: blur(3px); }
+.stream-preview .stream-list { min-height: 0; max-height: none; overflow: visible; padding: 0; }
+.stream-preview .stream-empty { min-height: 0; padding: 16px 0; }
+.stream-preview-row { padding: 0; }
+.stream-preview-row > button { display: grid; gap: 4px; width: 100%; padding: 8px; text-align: left; border: 0; background: transparent; }
+.stream-preview-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stream-preview-head .stream-choice { margin-left: auto; text-align: right; font-size: 10px; }
+.stream-preview-head time { color: var(--muted); font-size: 9px; flex-shrink: 0; }
+.stream-preview-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.stream-preview-note.negative { color: #ff8e87; }
+.stream-preview-note > span { flex-shrink: 0; }
+.inspected-decision { list-style: none; margin: 0; padding: 0; }
+.stream-expanded .stream-list { min-height: 0; max-height: calc(85dvh - 210px); overflow: auto; }
+.stream-expanded .stream-details { margin: 6px 0 0; }
+.cat-body > .decision { width: 100%; text-align: left; color: inherit; }
+
+/* Laptop workspace: fit the viewport without clipping content or scaling text. */
+@media (min-width: 1050px) and (min-height: 600px) {
+  main { height: 100dvh; display: flex; flex-direction: column; padding: 0 18px 8px; }
+  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; min-height: 64px; padding: 8px 0; margin-bottom: 10px; gap: 16px; flex-shrink: 0; }
+  h1 { font-size: 27px; }
+  .brand-sub { font-size: 7px; letter-spacing: 1px; margin-top: 5px; }
+  .overview { grid-column: auto; grid-row: auto; gap: 6px; }
+  .overview > div { padding: 6px 9px; gap: 3px; }
+  .overview strong { font-size: 17px; }
+  .overview .eyebrow { font-size: 7px; letter-spacing: 0.5px; }
+  .header-actions { grid-column: auto; grid-row: auto; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .header-actions > button { padding: 5px 8px; font-size: 10px; }
+  .mode { padding: 3px 6px; font-size: 8px; }
+  .trading-desk { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: stretch; }
+  .cats { min-height: 0; gap: 12px; align-items: stretch; }
+  .cat { display: flex; flex-direction: column; }
+  .cat-hero { height: clamp(90px, 15vh, 140px); flex-shrink: 0; }
+  .cat-identity { padding: 12px 16px; max-width: 78%; }
+  .cat-number { font-size: 8px; letter-spacing: 1.5px; }
+  .cat-identity h2 { font-size: clamp(25px, 2.5vw, 38px); margin: 4px 0 2px; letter-spacing: -1px; }
+  .persona-attribute { display: inline; font-size: inherit; letter-spacing: inherit; }
+  .cat-personality { display: none; }
+  .cat-portrait { width: 60%; object-position: center 32%; }
+  .coin-tags { gap: 4px; margin-top: 6px; }
+  .coin-tags span { font-size: 8px; padding: 2px 4px; }
+  .strategy-tag { right: 12px; bottom: 10px; font-size: 7px; letter-spacing: 0.7px; }
+  .cat-body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px 14px 12px; }
+  .cat-body > :not(.chart) { flex-shrink: 0; }
+  .equity { margin: 4px 0; gap: 8px; flex-wrap: nowrap; }
+  .equity strong { font-size: clamp(28px, 3vw, 42px); letter-spacing: -1.5px; }
+  .equity > span { font-size: 12px; }
+  .equity small { margin-top: 2px; font-size: 10px; }
+  .chart { flex: 1; min-height: 75px; height: auto; margin: 9px 0 5px; }
+  .decision { padding: 8px 10px; margin: 10px 0; }
+  .decision h3 { font-size: 13px; margin: 4px 0 2px; }
+  .decision p { font-size: 10px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .decision > .negative { font-size: 10px; line-height: 1.3; margin-top: 3px; }
+  .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 8px; margin: 0 0 10px; }
+  .metrics dt { font-size: 9px; margin-bottom: 4px; }
+  .metrics dd { font-size: 11px; }
+  .entry-budget { padding-top: 8px; }
+  .meter-track { margin-top: 5px; height: 3px; }
+  .position-detail { margin-top: 6px; font-size: 10px; }
+  .sidebar { min-height: 0; gap: 10px; display: flex; flex-direction: column; }
+  .sidebar > .trainer-panel, .engine-status { flex-shrink: 0; }
+  .stream-preview { flex: 1; display: flex; flex-direction: column; padding: 10px; }
+  .stream-preview .stream-heading { margin-bottom: 7px; }
+  .stream-preview .stream-timing { margin: 6px 0 7px; }
+  .stream-preview .stream-history-button { margin-top: auto; }
+  .stream-preview-row > button { padding: 7px; }
+  .stream-preview .stream-warning { padding: 0 0 5px; font-size: 10px; }
+  .notice { padding: 6px 10px; margin-bottom: 8px; font-size: 11px; flex-shrink: 0; }
+  footer { flex-shrink: 0; margin-top: 8px; padding-top: 6px; gap: 12px; font-size: 9px; }
+  .footer-brand { font-size: 15px; }
+  footer p { line-height: 1.4; }
+  .footer-note { display: inline; font-size: 8px; letter-spacing: 0; }
+}
+
+@media (max-width: 1049px) {
+  .cat-body { padding-bottom: 16px; }
+  .engine-status { grid-column: 1 / -1; }
+  .cat-body .decision p { overflow-wrap: anywhere; }
+  .stream-preview-note { white-space: normal; }
+}
+.trainer-title-button { color: inherit; background: transparent; border: 0; padding: 0; font: inherit; letter-spacing: inherit; }
+.trainer-title-button:hover { background: transparent; color: #ffd2bd; }
+.trainer-emblem { flex-basis: 30px; }
+.trainer-feature-meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; font-size: 10px; color: #dfb4ff; }
+.trainer-feature-meta time { margin: 0; }
+
+
+
+@media (min-width: 1050px) and (min-height: 600px) and (max-height: 700px) {
+  .cat-identity h2 { font-size: 28px; }
+  .trainer-panel { padding: 10px; }
+  .trainer-feature blockquote { font-size: 11px; }
+  .trainer-feature { padding: 7px; }
+  .trainer-watch { padding: 5px 0; }
+  .stream-preview-row > button { padding: 6px; }
+  .sidebar { gap: 8px; }
+  .trainer-panel-heading { margin-bottom: 7px; }
+  .trainer-live-label { margin-top: 7px; }
+  .stream-preview { padding: 8px 10px; }
+  .stream-preview .stream-timing { margin: 4px 0; }
+  .stream-preview .stream-preview-row > button { padding: 5px 7px; gap: 2px; }
+  .engine-status { padding: 8px 10px; gap: 3px; }
+  .cat-hero { height: 80px; }
+  .cat-identity { padding-top: 6px; }
+  .cat-body { padding-bottom: 10px; }
+  .chart { min-height: 60px; }
+  .decision { margin: 8px 0; }
+  .metrics { row-gap: 8px; }
+}

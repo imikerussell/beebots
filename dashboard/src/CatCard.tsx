@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { EquityChart } from "./EquityChart";
 import type { Cat, CatId, Profile, Snapshot } from "./types";
 import type { Curve } from "./useFeed";
@@ -51,6 +52,7 @@ export function CatCard({
   curve?: Curve;
   snap: Snapshot | null;
 }) {
+  const actionDialog = useRef<HTMLDialogElement>(null);
   const identity = CAT_META[id];
   const name = catName(id, cat?.name ?? meta?.name);
 
@@ -100,9 +102,10 @@ export function CatCard({
           </h2>
           <p className="cat-personality">{identity.style}</p>
           <div className="coin-tags">
-            {(meta?.coins ?? identity.coins).map((coin) => (
+            {(meta?.coins ?? identity.coins).slice(0, 4).map((coin) => (
               <span key={coin}>{coin}</span>
             ))}
+            {(meta?.coins.length ?? 0) > 4 && <span title={meta?.coins.join(", ")}>+{meta!.coins.length - 4}</span>}
           </div>
         </div>
         <span className="strategy-tag">
@@ -149,7 +152,7 @@ export function CatCard({
           </span>
           <span>Since allocation · USD</span>
         </div>
-        <div className="decision">
+        <button className="decision" onClick={() => actionDialog.current?.showModal()} aria-label={`Latest action for ${name}: ${cat?.last?.choice ?? "No decision"}. Open details`}>
           <div className="decision-head">
             <span className="eyebrow">Latest recorded action</span>
             <span className="decision-time">
@@ -171,11 +174,15 @@ export function CatCard({
                 ? "No decision recorded yet. Cash is a valid position."
                 : "Connect the engine to see recorded decisions.")}
           </p>
-          {cat?.last?.vetoedBy && (
-            <div className="negative">Risk veto: {cat.last.vetoedBy}</div>
-          )}
-          {cat?.cap && <div className="negative">Entry limit: {cat.cap}</div>}
-        </div>
+          {(cat?.last?.vetoedBy || cat?.cap) && <div className="negative">{cat.last?.vetoedBy ? "Risk veto" : "Entry limit"} · view details ↗</div>}
+        </button>
+        <dialog ref={actionDialog} className="dashboard-dialog" onClick={event => { if (event.target === actionDialog.current) actionDialog.current.close(); }} aria-label={`Latest action for ${name}`}>
+          <header><h2>{name} · latest action</h2><button aria-label="Close action details" onClick={() => actionDialog.current?.close()}>×</button></header>
+          <h3>{cat?.last?.choice ?? "No model action"}</h3>
+          <p>{cat?.last?.status ?? "No decision recorded yet."}</p>
+          {cat?.last?.vetoedBy && <p className="negative">Risk veto: {cat.last.vetoedBy}</p>}
+          {cat?.cap && <p className="negative">Entry limit: {cat.cap}</p>}
+        </dialog>
         <dl className="metrics">
           {metrics.map(([label, value]) => (
             <div key={label}>
@@ -203,28 +210,6 @@ export function CatCard({
             {cat.position.entryPx.toFixed(2)}
           </p>
         )}
-        <details className="strategy-details">
-          <summary>
-            How {name} trades <span aria-hidden="true">↗</span>
-          </summary>
-          <p>
-            {meta?.tagline ??
-              (id === "tiger"
-                ? "Active long/short momentum"
-                : "Breezy long/short trend")}
-          </p>
-          {meta?.strategyFacts?.length ? (
-            <ul>
-              {meta.strategyFacts.map((fact) => (
-                <li key={fact}>{fact}</li>
-              ))}
-            </ul>
-          ) : (
-            <p>Connect the engine to load the current strategy rules.</p>
-          )}
-          {meta?.rules && <p>{meta.rules}</p>}
-          <p>Experiment rules; profitability has not been established.</p>
-        </details>
       </div>
     </article>
   );
