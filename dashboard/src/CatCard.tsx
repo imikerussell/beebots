@@ -150,7 +150,7 @@ export function CatCard({
           <span>
             <i /> EQUITY HISTORY
           </span>
-          <span>Since allocation · USD</span>
+          <span title="Each chart fits its own equity range, including the starting allocation.">Auto-scaled · USD</span>
         </div>
         <button className="decision" onClick={() => actionDialog.current?.showModal()} aria-label={`Latest action for ${name}: ${cat?.last?.choice ?? "No decision"}. Open details`}>
           <div className="decision-head">
