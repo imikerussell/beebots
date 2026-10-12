@@ -4,6 +4,7 @@ import { CATS, type BeeId, type Config } from "./config.js";
 import { STRATEGY_VERSION } from "./decision.js";
 import { TRAINER_PROMPT, trainerDisplayName, trainerPlaybook } from "./coach-prompt.js";
 import type { Db } from "./db.js";
+import { applyParameters, strategyParameters, tunableParameters, PARAMETER_BOUNDS, type ParameterValues, type StrategyParameter } from "./strategy-parameters.js";
 import { redactString } from "./redact.js";
 
 const DAY = 86_400_000;
@@ -49,7 +50,9 @@ const FIELD_FORMATS = {
   quip: "A nonempty plain ASCII line, at most 90 characters, with the cat's display name; no quotation marks or hashtags.",
   note: "Exactly two sentences, at most 800 characters.",
 };
+const ParameterChange = z.object({ field: z.enum(["minConviction", "minActionProbability", "minMomentumPct", "momentumAtrMult", "minTrendScore", "volTargetPct", "trimScoreDrop"]), from: z.number().finite(), to: z.number().finite() }).strict();
 export const CoachAnswer = z.object({
+  parameterChanges: z.array(ParameterChange).max(1).optional(),
   idea: z.string().trim().min(1).max(80),
   rules: ascii(400).refine(s => sentences(s) >= 2 && sentences(s) <= 4, "Use 2 to 4 sentences")
     .refine(s => !/\$|\b\d{4}-\d{2}-\d{2}\b/.test(s), "No literal prices or dates"),
@@ -62,10 +65,10 @@ const RESPONSE_FORMAT = {
   type: "json_schema",
   json_schema: { name: "cat_coach_rules", strict: true, schema: {
     type: "object", additionalProperties: false,
-    required: ["idea", "rules", "coins", "reason", "quip", "note"],
-    properties: Object.fromEntries(Object.entries(FIELD_FORMATS).map(([key, description]) => [key, {
+    required: ["idea", "rules", "coins", "reason", "quip", "note", "parameterChanges"],
+    properties: { parameterChanges: { type: "array", maxItems: 1, items: { type: "object", additionalProperties: false, required: ["field", "from", "to"], properties: { field: {type:"string",enum:Object.keys(PARAMETER_BOUNDS)}, from:{type:"number"}, to:{type:"number"} } } }, ...Object.fromEntries(Object.entries(FIELD_FORMATS).map(([key, description]) => [key, {
       type: "string", description, ...(key === "quip" ? { minLength: 1, maxLength: 90 } : {}),
-    }])),
+    }])), },
   } },
 };
 type Answer = z.infer<typeof CoachAnswer>;
@@ -74,7 +77,7 @@ function responseFormatError(error: z.ZodError): CoachReviewError {
   const fields = [...new Set(error.issues.map(issue => issue.path[0]))];
   const detail = fields.map(field => typeof field === "string" && Object.hasOwn(FIELD_FORMATS, field)
     ? `${field}: ${FIELD_FORMATS[field as keyof typeof FIELD_FORMATS]}`
-    : "Return exactly idea, rules, coins, reason, quip and note, all as strings.").join(" ");
+    : "Return idea, rules, coins, reason, quip and note as strings, plus parameterChanges as an array of at most one {field, from, to} object.").join(" ");
   return new CoachReviewError("response_schema", detail);
 }
 /** A decorative caption must never invalidate otherwise valid strategy fields. */
@@ -112,13 +115,13 @@ function parseReview(body: string, name: string): Answer {
   if (!review.success) throw responseFormatError(review.error);
   return review.data;
 }
-// Good's source brain was unchanged by the active-momentum upgrade; older engines differ.
-const evidenceVersions = (cat: BeeId) => cat === "mochi" ? [STRATEGY_VERSION, "catfolio-5-source-engine"] : [STRATEGY_VERSION];
+// Both current strategies differ from the source engine; do not mix their evidence.
+const evidenceVersions = (_cat: BeeId) => [STRATEGY_VERSION];
 const versionFilter = "json_extract(audit_json,'$.strategyVersion') IN (SELECT value FROM json_each(?))";
 type LegacyAnswer = z.infer<typeof LegacyCoachAnswer>;
 const SavedCoachAnswer = z.union([CoachAnswer, LegacyCoachAnswer]);
-type Values = { rules: string; coins: string[] };
-export const coachValues = (cfg: Config, cat: BeeId): Values => ({ rules: cfg.slots[cat].rules, coins: [...cfg.slots[cat].coins] });
+type Values = { rules: string; coins: string[]; parameters: ParameterValues };
+export const coachValues = (cfg: Config, cat: BeeId): Values => ({ rules: cfg.slots[cat].rules, coins: [...cfg.slots[cat].coins], parameters: strategyParameters(cfg, cat) });
 const displayName = trainerDisplayName;
 export function coachRevision(cfg: Config, cat: BeeId): string {
   return createHash("sha256").update(JSON.stringify([STRATEGY_VERSION, cfg.cats[cat], cfg.strategies[cat], cfg.slots[cat], cfg.mode])).digest("hex");
@@ -174,14 +177,13 @@ export class CatCoach {
     // Old threshold proposals remain history, but can no longer mutate the engine.
     d.db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE status='pending' AND json_extract(review,'$.rules') IS NULL").run(this.now());
     d.db.raw.prepare("UPDATE coach_reviews SET status='failed', completed_at=?, resolved_at=?, error_code='engine_restarted' WHERE status='reviewing'").run(this.now(), this.now());
-    // Retire incompatible overlays, preserving Good Wall-E when only Dark's strategy changes.
+    // Retire incompatible overlays without deleting their review history.
     const previousStrategy = d.db.getMeta("coach_strategy_version");
     if (previousStrategy !== STRATEGY_VERSION) {
-      const scope = previousStrategy === "catfolio-5-source-engine" ? " WHERE cat='tiger'" : "";
       d.db.transaction(() => {
-        d.db.raw.prepare(`UPDATE coach_reviews SET status='rolled_back',resolved_at=? WHERE id IN (SELECT review_id FROM coach_rule_overrides${scope} UNION SELECT review_id FROM coach_overrides${scope})`).run(this.now());
+        d.db.raw.prepare("UPDATE coach_reviews SET status='rolled_back',resolved_at=? WHERE id IN (SELECT review_id FROM coach_rule_overrides UNION SELECT review_id FROM coach_overrides)").run(this.now());
         d.db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE status='pending'").run(this.now());
-        d.db.raw.exec(`DELETE FROM coach_overrides${scope}; DELETE FROM coach_rule_overrides${scope};`);
+        d.db.raw.exec("DELETE FROM coach_overrides; DELETE FROM coach_rule_overrides;");
         d.db.setMeta("coach_strategy_version", STRATEGY_VERSION);
       });
     }
@@ -197,9 +199,10 @@ export class CatCoach {
         d.db.raw.prepare("DELETE FROM coach_rule_overrides WHERE cat=?").run(cat);
         continue;
       }
-      const values = z.object({ rules: ascii(400), coins: z.array(z.string()).min(1) }).strict().parse(JSON.parse(row.values_json));
+      const values = z.object({ rules: ascii(400), coins: z.array(z.string()).min(1), parameters: z.record(z.number().finite()) }).strict().parse(JSON.parse(row.values_json));
+      this.validateSavedParameters(cat, values.parameters);
       if (values.coins.some(c => !this.baseline[cat].coins.includes(c))) throw new CoachConflict("Saved coach coins are outside the allowed universe.");
-      Object.assign(d.cfg.slots[cat], values); d.changed(cat);
+      this.apply(cat, values); d.changed(cat);
     }
   }
 
@@ -217,7 +220,7 @@ export class CatCoach {
       enabled, canReview: !!cfg.coach.adminToken && !this.d.closed(), model: cfg.coach.model,
       message: this.d.closed() ? "Experiment closed; coaching paused." : !cfg.coach.enabled ? "Coach is off. Enable COACH_ENABLED and configure AI_GATEWAY_API_KEY on the engine."
         : !cfg.coach.apiKey ? "Set AI_GATEWAY_API_KEY on the engine to enable trainer reviews."
-        : "Automatic rules-and-coins reviews every 4 hours per cat, after at least one hour and 30 observations. Validated changes apply immediately.",
+        : "Automatic reviews every 4 hours: rules, coins and at most one bounded strategy parameter. Numeric changes require evidence and a flat position; capital and loss limits stay owner-controlled.",
       approvalMessage: null,
       automatic: true, reviewIntervalMs: COACH_INTERVAL_MS,
       checkedAt: this.lastCheckAt,
@@ -230,7 +233,7 @@ export class CatCoach {
           : readiness.cooldownUntil !== null && readiness.cooldownUntil > this.now() ? "scheduled"
           : readiness.ready ? "queued" : "gathering";
         const counts = db.raw.prepare("SELECT COUNT(*) AS reviews, SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END) AS accepted FROM coach_reviews WHERE cat=?").get(cat) as { reviews: number; accepted: number | null };
-        return { cat, current: coachValues(cfg, cat), baseline: this.baseline[cat], context: this.d.context(cat),
+        return { cat, current: coachValues(cfg, cat), baseline: this.baseline[cat], tunableParameters: tunableParameters(cfg, cat), context: this.d.context(cat),
           activeReviewId: (db.raw.prepare("SELECT review_id FROM coach_rule_overrides WHERE cat=?").get(cat) as { review_id: number } | undefined)?.review_id ?? null,
           nextReviewAt: readiness.earliestReviewAt, phase,
           observations: readiness.decisions, requiredObservations: MIN_OBSERVATIONS,
@@ -256,7 +259,9 @@ export class CatCoach {
       ready: last?.status !== "pending" && last?.status !== "reviewing" && summary.decisions >= MIN_OBSERVATIONS && observedMs >= MIN_OBSERVATION_MS && (cooldownUntil === null || now >= cooldownUntil) };
   }
   private evidence(cat: BeeId, now: number) {
-    const db = this.d.db.raw, since = now - DAY;
+    const db = this.d.db.raw;
+    const lastChange = db.prepare("SELECT MAX(resolved_at) AS at FROM coach_reviews WHERE cat=? AND status IN ('accepted','rolled_back')").get(cat) as {at: number | null};
+    const since = Math.max(now - DAY, lastChange.at ?? 0);
     const strategyVersions = evidenceVersions(cat), versions = JSON.stringify(strategyVersions);
     const summary = db.prepare(`SELECT COUNT(*) AS decisions, MIN(ts) AS firstAt,
       SUM(CASE WHEN choice='WAIT' OR (choice IS NULL AND (SELECT COUNT(*) FROM json_each(menu_json))=0) THEN 1 ELSE 0 END) AS waits,
@@ -278,7 +283,30 @@ export class CatCoach {
       WHERE o.bee=? AND o.ts>=? AND o.ts<=? AND ${versionFilter} AND o.purpose='open' AND o.state='filled'`).get(cat, since, now, versions);
     const excluded = db.prepare(`SELECT COUNT(*) AS count FROM decisions WHERE bee=? AND ts>=? AND ts<=?
       AND json_extract(audit_json,'$.source') IN ('model_request','rules') AND COALESCE((${versionFilter}),0)=0`).get(cat, since, now, versions) as { count: number };
-    return { since, until: now, strategyVersions, excludedObservations: excluded.count, summary, outcomes, blockers, recent, entries, current: this.d.context(cat) };
+    const fills = db.prepare(`SELECT f.order_id AS orderId, f.ts, f.contracts, f.fee_usd AS fee, f.realised_usd AS realised,
+      o.purpose, o.reduce_only AS reducing, json_extract(d.audit_json,'$.strategyVersion') AS version
+      FROM fills f JOIN orders o ON o.id=f.order_id JOIN decisions d ON d.id=o.decision_id
+      WHERE f.bee=? AND f.ts<=? ORDER BY f.ts,f.id`).all(cat, now) as Array<{orderId:number;ts:number;contracts:number;fee:number;realised:number;purpose:string;reducing:number;version:string}>;
+    let trade: {orderId:number;net:number;entry:number;remaining:number;valid:boolean} | null = null;
+    const closed: number[] = [];
+    // Full close purposes are emitted only for full requested exits; use contract balances to handle partial fills.
+    fills.forEach(f => {
+      const q = f.contracts;
+      if (f.purpose === "open" && trade?.orderId !== f.orderId)
+        trade = {orderId:f.orderId,net:0,entry:f.ts,remaining:0,valid:strategyVersions.includes(f.version)};
+      if (!trade) return;
+      trade.valid &&= strategyVersions.includes(f.version);
+      trade.net += f.realised - f.fee;
+      trade.remaining += f.reducing ? -q : q;
+      if (trade.remaining <= 1e-8) {
+        if (trade.valid && trade.entry >= since) closed.push(trade.net);
+        trade = null;
+      }
+    });
+    const performance = { closedTrades: closed.length, winners: closed.filter(n => n > 0).length,
+      netClosedPnlAfterFeesUsd: closed.reduce((a,b) => a+b,0),
+      note: "Completed round trips opened within this window under compatible strategy versions; slippage is embedded. Funding and model costs are separate; this is not a backtest or proof of an edge." };
+    return { performance, since, until: now, strategyVersions, excludedObservations: excluded.count, summary, outcomes, blockers, recent, entries, current: this.d.context(cat) };
   }
   tick(): Promise<void> {
     if (this.running) return this.running;
@@ -306,7 +334,7 @@ export class CatCoach {
       try {
         const messages = [
           { role: "system", content: TRAINER_PROMPT },
-          { role: "user", content: JSON.stringify({ cat: { id: cat, name: displayName(cfg, cat), current: coachValues(cfg, cat), allowedCoins: this.baseline[cat].coins },
+          { role: "user", content: JSON.stringify({ cat: { id: cat, name: displayName(cfg, cat), current: coachValues(cfg, cat), allowedCoins: this.baseline[cat].coins, tunableParameters: tunableParameters(cfg, cat) },
             decisionIntervalMs: cfg.tickMs, playbook: trainerPlaybook(cfg),
             scorecard: CATS.map(id => ({ cat: id, name: displayName(cfg, id), current: coachValues(cfg, id), evidence: id === cat ? evidence : this.evidence(id, now) })),
             viewerCats: null, universe: this.d.universe?.() ?? { available: false },
@@ -333,14 +361,14 @@ export class CatCoach {
               db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=?,completed_at=? WHERE id=?").run(this.now(), this.now(), id);
               break;
             }
-            messages.push({ role: "user", content: `Your response failed validation: ${COACH_ERRORS[err.message]} ${err.detail ?? ""} Return a complete replacement JSON object using the original evidence and the six required fields. Keep it concise. Do not add fields or surrounding prose.` });
+            messages.push({ role: "user", content: `Your response failed validation: ${COACH_ERRORS[err.message]} ${err.detail ?? ""} Return a complete replacement JSON object using the original evidence and the required fields including parameterChanges. Keep it concise. Do not add fields or surrounding prose.` });
           }
         }
         if (!review) continue;
         stage = "change";
-        const values = this.validate(cat, review);
+        const values = this.validate(cat, review, evidence);
         const current = coachValues(cfg, cat);
-        const unchanged = this.sameRules(values.rules, current.rules) && JSON.stringify(values.coins) === JSON.stringify(current.coins);
+        const unchanged = this.sameRules(values.rules, current.rules) && JSON.stringify(values.coins) === JSON.stringify(current.coins) && JSON.stringify(values.parameters) === JSON.stringify(current.parameters);
         const status = this.stopped || this.d.closed() || revision !== coachRevision(cfg, cat) || this.now() >= now + DAY
           ? "expired" : unchanged ? "no_change" : "accepted";
         db.transaction(() => {
@@ -348,7 +376,7 @@ export class CatCoach {
             .run(status, JSON.stringify(review), this.now(), this.now(), id);
           if (status === "accepted") this.saveOverride(cat, id, values);
         });
-        if (status === "accepted") { Object.assign(cfg.slots[cat], values); this.d.changed(cat); }
+        if (status === "accepted") { this.apply(cat, values); this.d.changed(cat); }
       } catch (err) {
         // Map errors to a fixed vocabulary; never retain a provider body or credential-bearing message.
         const code = err instanceof CoachReviewError ? err.message
@@ -358,14 +386,51 @@ export class CatCoach {
       }
     }
   }
-  private validate(cat: BeeId, review: Answer): Values {
+  private validate(cat: BeeId, review: Answer, evidence = this.evidence(cat, this.now())): Values {
     CoachAnswer.parse(review);
     const allowed = this.baseline[cat].coins;
     const coins = review.coins ? review.coins.split(",").map(c => c.trim()) : [...allowed];
     if (new Set(coins).size !== coins.length || coins.some(c => !allowed.includes(c)))
       throw new CoachConflict("The proposed coin list is outside this cat's allowed universe.");
     if (!review.quip.includes(displayName(this.d.cfg, cat))) throw new CoachConflict("The quip must use the cat's display name.");
-    return { rules: review.rules, coins: allowed.filter(c => coins.includes(c)) };
+    const parameters = strategyParameters(this.d.cfg, cat);
+    for (const change of review.parameterChanges ?? []) {
+      const bound = PARAMETER_BOUNDS[change.field];
+      const context = this.d.context(cat) as { position?: unknown; account?: { position?: unknown }; diagnostics?: Array<{blockers: string[]; indicatorsAgeMs?: number | null; maxIndicatorsAgeMs?: number | null}> };
+      if (context?.position || context?.account?.position) throw new CoachConflict("Numeric strategy changes require a flat position.");
+      if (parameters[change.field] !== change.from || change.to === change.from || change.to < bound.min || change.to > bound.max ||
+        Math.abs(change.to - change.from) > bound.maxStep + 1e-9 ||
+        (["minTrendScore", "trimScoreDrop"].includes(change.field) && !Number.isInteger(change.to)))
+        throw new CoachConflict("Numeric change exceeds the permitted bounds, step or current revision.");
+      const blockers = evidence.blockers as Array<{reason: string; decisions: number}>;
+      const blocked = bound.evidence === "weakConviction" ? evidence.summary.weakConviction
+        : bound.evidence === "weakProbability" ? evidence.summary.weakProbability
+        : blockers.find(b => b.reason === bound.evidence)?.decisions ?? 0;
+      // Relaxing entry gates needs repeated relevant vetoes, not just generic inactivity.
+      // Other tuning needs actual complete round trips, never thousands of repeated HOLDs.
+      if (change.to < change.from && bound.evidence !== "closed_trades") {
+        if (blocked < 30) throw new CoachConflict("Insufficient matching entry-blocker evidence.");
+        if (!context.diagnostics?.some(d => d.indicatorsAgeMs != null && d.maxIndicatorsAgeMs != null &&
+          d.indicatorsAgeMs >= 0 && d.indicatorsAgeMs <= d.maxIndicatorsAgeMs &&
+          d.blockers.every(b => b === bound.evidence))) throw new CoachConflict("No fresh feasible signal supporting this parameter change.");
+      } else if (evidence.performance.closedTrades < 5) throw new CoachConflict("Need five completed trades for this numeric change.");
+      parameters[change.field] = change.to;
+    }
+    return { rules: review.rules, coins: allowed.filter(c => coins.includes(c)), parameters };
+  }
+  private apply(cat: BeeId, values: Values) {
+    Object.assign(this.d.cfg.slots[cat], {rules: values.rules, coins: [...values.coins]});
+    applyParameters(this.d.cfg, cat, values.parameters);
+  }
+  private validateSavedParameters(cat: BeeId, values: ParameterValues) {
+    const expected = strategyParameters(this.d.cfg, cat);
+    if (Object.keys(values).length !== Object.keys(expected).length) throw new CoachConflict("Incomplete saved parameters");
+    for (const [key, value] of Object.entries(values)) {
+      const bound = PARAMETER_BOUNDS[key as StrategyParameter];
+      if (!Object.hasOwn(expected, key) || !bound || !Number.isFinite(value) ||
+        (value !== this.baseline[cat].parameters[key as StrategyParameter] && (value! < bound.min || value! > bound.max)) ||
+        (["minTrendScore", "trimScoreDrop"].includes(key) && !Number.isInteger(value))) throw new CoachConflict("Invalid saved parameters");
+    }
   }
   private sameRules(a: string, b: string) { return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim(); }
   private saveOverride(cat: BeeId, id: number, values: Values) {
@@ -391,11 +456,11 @@ export class CatCoach {
       if (action === "accept") db.raw.prepare("INSERT INTO coach_rule_overrides(cat,review_id,values_json,baseline_json) VALUES(?,?,?,?) ON CONFLICT(cat) DO UPDATE SET review_id=excluded.review_id,values_json=excluded.values_json,baseline_json=excluded.baseline_json")
         .run(row.cat, id, JSON.stringify(values), JSON.stringify(this.baseline[row.cat]));
     });
-    if (action === "accept") { Object.assign(cfg.slots[row.cat], values); this.d.changed(row.cat); }
+    if (action === "accept") { this.apply(row.cat, values); this.d.changed(row.cat); }
     return this.state();
   }
   reset(cat: BeeId) {
-    const { cfg, db } = this.d;
+    const { db } = this.d;
     if (this.d.closed()) throw new CoachConflict("The experiment is closed.");
     const row = db.raw.prepare("SELECT review_id FROM coach_rule_overrides WHERE cat=?").get(cat) as { review_id: number } | undefined;
     if (!row) throw new CoachConflict("No active coach changes to reset.");
@@ -404,7 +469,7 @@ export class CatCoach {
       db.raw.prepare("UPDATE coach_reviews SET status='rolled_back',resolved_at=? WHERE id=?").run(this.now(), row.review_id);
       db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE cat=? AND status='pending'").run(this.now(), cat);
     });
-    Object.assign(cfg.slots[cat], { ...this.baseline[cat], coins: [...this.baseline[cat].coins] }); this.d.changed(cat);
+    this.apply(cat, this.baseline[cat]); this.d.changed(cat);
     return this.state();
   }
 }

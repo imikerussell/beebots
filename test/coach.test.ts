@@ -50,7 +50,7 @@ describe("rules and coins trainer", () => {
     const h = harness(); await h.coach.tick();
     const payload = JSON.parse(String(h.fetcher.mock.calls[0]![1].body));
     const data = JSON.parse(payload.messages[1].content);
-    expect(payload.response_format.json_schema.schema.required).toEqual(["idea", "rules", "coins", "reason", "quip", "note"]);
+    expect(payload.response_format.json_schema.schema.required).toEqual(["idea", "rules", "coins", "reason", "quip", "note", "parameterChanges"]);
     expect(data.cat).toMatchObject({ name: "DARK Wall-E", allowedCoins: [...BIZZY_BREAKOUT_COINS] });
     expect(data.scorecard).toHaveLength(2); expect(data.viewerCats).toBeNull();
     expect(data.universe.coins[0]).toMatchObject({ coin: "BTC", marketEligible: true });
@@ -63,7 +63,7 @@ describe("rules and coins trainer", () => {
     const h = harness(), original = coachValues(h.cfg, "tiger"), limits = structuredClone(h.cfg.cats);
     await h.coach.tick(); const entry = h.coach.state().entries[0]!;
     expect(entry.status).toBe("accepted");
-    expect(coachValues(h.cfg, "tiger")).toEqual({ rules: answer.rules, coins: ["BTC", "ETH"] });
+    expect(coachValues(h.cfg, "tiger")).toMatchObject({ rules: answer.rules, coins: ["BTC", "ETH"] });
     expect(h.cfg.cats).toEqual(limits); expect(h.changed).toHaveBeenCalledWith("tiger");
     expect(() => h.coach.resolve(entry.id, "accept")).toThrow(/no longer/);
     const newCfg = h.config(), restarted = new CatCoach({ ...h.deps, cfg: newCfg });
@@ -200,14 +200,14 @@ describe("rules and coins trainer", () => {
     expect(coach.state().cats[0]?.activeReviewId).toBeNull();
     expect(coach.state().entries).toHaveLength(1);
   });
-  it("retires only Dark's old strategy overlay while preserving Good's rules on the active upgrade", async () => {
+  it("retires both incompatible overlays on the configurable-strategy upgrade", async () => {
     const h = harness(); observations(h.db,"mochi",h.now()); await h.coach.tick();
     h.db.setMeta("coach_strategy_version","catfolio-5-source-engine");
     const cfg = h.config(), restarted = new CatCoach({...h.deps,cfg});
     expect(restarted.state().cats[0]?.activeReviewId).toBeNull();
     expect(cfg.slots.tiger.rules).toContain("LONG or SHORT");
-    expect(restarted.state().cats[1]?.activeReviewId).not.toBeNull();
-    expect(cfg.slots.mochi.rules).toBe(answer.rules);
+    expect(restarted.state().cats[1]?.activeReviewId).toBeNull();
+    expect(cfg.slots.mochi.rules).not.toBe(answer.rules);
   });
   it("preserves legacy history while retiring replacement-engine overlays and pending patches", async () => {
     const h = harness({ seed: false });
@@ -219,7 +219,7 @@ describe("rules and coins trainer", () => {
     h.db.setMeta("coach_strategy_version", "catfolio-3-intraday");
     const restarted = new CatCoach(h.deps);
     expect(restarted.state().entries[0]).toMatchObject({ id: 42, status: "expired", review });
-    expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
     expect(() => restarted.resolve(42, "accept")).toThrow(/no longer/);
     h.advance(COACH_INTERVAL_MS); observations(h.db, "tiger", h.now()); await restarted.tick();
     expect(restarted.state().entries[0]?.status).toBe("accepted");
@@ -279,7 +279,7 @@ describe("rules and coins trainer", () => {
     expect(review.quip.length).toBeLessThanOrEqual(90);
     expect(review.quip).not.toMatch(/[^\x20-\x7E]|["#]/);
     expect(review).toEqual({ ...answer, quip: review.quip });
-    expect(coachValues(h.cfg, "tiger")).toEqual({rules:answer.rules, coins:["BTC","ETH"]});
+    expect(coachValues(h.cfg, "tiger")).toMatchObject({rules:answer.rules, coins:["BTC","ETH"]});
     const restarted = new CatCoach({...h.deps, cfg:h.config()});
     expect(restarted.state().entries[0]?.review).toEqual(review);
   });
@@ -397,14 +397,14 @@ describe("rules and coins trainer", () => {
       summary:{decisions:31,waits:31}, entries:{count:1}, blockers:[{reason:"momentum_not_confirmed",decisions:31}] });
     expect(JSON.stringify(evidence)).not.toMatch(/minTrendScore|old_strategy/);
   });
-  it("retains Good's compatible source-engine observations but excludes Dark's old breakout observations", async () => {
+  it("excludes both legacy strategies from current trainer evidence", async () => {
     const h = harness(); observations(h.db,"mochi",h.now());
     h.db.raw.exec("UPDATE decisions SET audit_json=json_set(audit_json,'$.strategyVersion','catfolio-5-source-engine')");
     await h.coach.tick();
-    expect(h.fetcher).toHaveBeenCalledTimes(1);
-    expect(h.coach.state().entries[0]?.cat).toBe("mochi");
+    expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.coach.state().entries).toHaveLength(0);
     expect(h.coach.state().cats[0]?.observations).toBe(0);
-    expect(h.coach.state().cats[1]?.observations).toBe(31);
+    expect(h.coach.state().cats[1]?.observations).toBe(0);
   });
   it("publishes automatic decisions and still requires owner authorization to restore originals", async () => {
     const h = harness(); await h.coach.tick();
@@ -420,5 +420,104 @@ describe("rules and coins trainer", () => {
     expect((await post(h.cfg.coach.adminToken)).status).toBe(200); expect(h.cfg.slots.tiger.rules).not.toBe(answer.rules);
     expect((await post(h.cfg.coach.adminToken)).status).toBe(409);
     expect((await fetch(`${url}/coach/reset`, { method: "OPTIONS" })).status).toBe(405);
+  });
+});
+
+describe("bounded numeric trainer changes", () => {
+  function numericHarness(patch: {field:string;from:number;to:number} = {field:"minConviction",from:1,to:0.75}) {
+    const h=harness({answer:{...answer,parameterChanges:[patch]}});
+    h.db.raw.exec(`UPDATE decisions SET choice='LONG_BTC', conviction=0.8, probabilities_json='{"LONG_BTC":0.8}',
+      vetoed_by='weak_conviction p=0.80 c=0.8',
+      audit_json=json_set(audit_json,'$.config.openGate.minConviction',1,'$.config.openGate.minProb',0.55)`);
+    h.deps.context=()=>({position:null,diagnostics:[{blockers:[],indicatorsAgeMs:1000,maxIndicatorsAgeMs:180000}]});
+    return h;
+  }
+  it("changes a real fractional entry gate, persists it, and restores the owner baseline",async()=>{
+    const h=numericHarness();
+    const f=riskFixture();f.ctx.cfg=h.cfg;f.ctx.knobs=h.cfg.cats.tiger;
+    const proposed={...f.proposal,conviction:0.8};
+    expect(f.run(proposed).vetoedBy).toContain("weak_conviction");
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(f.run(proposed).action.kind).toBe("open");
+    expect(h.cfg.cats.tiger.minConviction).toBe(0.75);
+    expect(h.coach.state().cats[0]?.current.parameters.minConviction).toBe(0.75);
+    const cfg=h.config(), restarted=new CatCoach({...h.deps,cfg});
+    expect(cfg.cats.tiger.minConviction).toBe(0.75);
+    restarted.reset("tiger");
+    expect(cfg.cats.tiger.minConviction).toBe(1);
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
+  });
+  it.each([
+    {field:"minConviction",from:1,to:0.5},
+    {field:"minConviction",from:0.9,to:0.75},
+    {field:"minTrendScore",from:4,to:3},
+    {field:"maxLeverage",from:1,to:2},
+    {field:"stopRiskPct",from:0.5,to:1},
+  ])("rejects unsupported, stale or excessive changes: %j",async patch=>{
+    const h=numericHarness(patch), before=structuredClone(h.cfg);
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("failed");
+    expect(h.cfg).toEqual(before);
+  });
+  it.each(["position", "stale", "missing", "unrelated", "insufficient"])("does not relax a gate with %s evidence",async kind=>{
+    const h=numericHarness();
+    if(kind==="position")h.deps.context=()=>({position:{coin:"BTC",side:"long"}});
+    if(kind==="stale")h.deps.context=()=>({position:null,diagnostics:[{blockers:["stale_indicators"],indicatorsAgeMs:999999,maxIndicatorsAgeMs:180000}]});
+    if(kind==="missing")h.deps.context=()=>({position:null});
+    if(kind==="unrelated")h.db.raw.exec("UPDATE decisions SET vetoed_by='stale_market_data'");
+    if(kind==="insufficient")h.db.raw.exec("DELETE FROM decisions WHERE id > 29");
+    await h.coach.tick();
+    // Readiness itself prevents a review when there are fewer than 30 observations.
+    expect(h.coach.state().entries[0]?.status).not.toBe("accepted");
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
+  });
+  it("requires completed trades for tightening a gate, not just many decisions",async()=>{
+    const h=numericHarness({field:"minConviction",from:1,to:1.25});
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("failed");
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
+  });
+  it.each([4, 5])("uses complete round trips, not partial trims or old strategies, for %i-trade evidence", async count => {
+    const h = numericHarness({field:"minConviction",from:1,to:1.25});
+    let sequence = 0;
+    const fill = (decisionId:number, purpose:string, contracts:number, realised:number, orderId?:number) => {
+      const ts = h.now() - 120000 + sequence++;
+      const reducing = purpose !== "open";
+      const id = orderId ?? h.db.insertOrder({decisionId,bee:"tiger",ts,clOrdId:`evidence-${sequence}`,
+        instId:"BTC-USDT-SWAP",side:reducing?"sell":"buy",contracts,reduceOnly:reducing,purpose});
+      h.db.updateOrder(id,"filled",null,null);
+      h.db.insertFill({orderId:id,bee:"tiger",ts,instId:"BTC-USDT-SWAP",side:reducing?"sell":"buy",
+        contracts,px:100,notionalUsd:contracts*100,feeUsd:0.1,realisedUsd:realised});
+      return id;
+    };
+    // A split opening fill, trim and final exit are exactly one trade, including every fee.
+    for (let i = 0; i < count; i++) {
+      const decisionId = i + 3, id = fill(decisionId,"open",4,0);
+      fill(decisionId,"open",6,0,id);
+      fill(decisionId,"trim",5,1);
+      fill(decisionId,"close",5,2);
+    }
+    h.db.raw.prepare("UPDATE decisions SET audit_json=json_set(audit_json,'$.strategyVersion','old-strategy') WHERE id=2").run();
+    fill(2,"open",10,0); fill(2,"close",10,100);
+    fill(1,"open",10,0); fill(1,"trim",5,100);
+    await h.coach.tick();
+    const entry = h.coach.state().entries[0]!;
+    expect(entry.evidence).toMatchObject({performance:{closedTrades:count,winners:count,
+      netClosedPnlAfterFeesUsd:expect.closeTo(count*2.6,8)}});
+    expect(entry.status).toBe(count === 5 ? "accepted" : "failed");
+    expect(h.cfg.cats.tiger.minConviction).toBe(count === 5 ? 1.25 : 1);
+  });
+  it("an explicit environment baseline change supersedes the saved numeric overlay",async()=>{
+    const h=numericHarness();await h.coach.tick();
+    const cfg=h.config();cfg.cats.tiger.minConviction=1.5;
+    const restarted=new CatCoach({...h.deps,cfg});
+    expect(cfg.cats.tiger.minConviction).toBe(1.5);
+    expect(restarted.state().cats[0]?.activeReviewId).toBeNull();
+  });
+  it("never accepts more than one numeric change per review",()=>{
+    expect(CoachAnswer.safeParse({...answer,parameterChanges:[
+      {field:"minConviction",from:1,to:0.75},{field:"minActionProbability",from:0.55,to:0.5}
+    ]}).success).toBe(false);
   });
 });

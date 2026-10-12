@@ -43,20 +43,51 @@ export class ProviderBridge implements EngineJev {
   }
 }
 
-/** Observe source ticks only to drain them during shutdown; the original tick remains serialized. */
+/** Track loop progress and drain shutdown without changing the source trading algorithm. */
 class TrackedEngine extends Engine {
-  private pending = new Set<Promise<void>>();
+  private pending = new Map<"decisions" | "market", Promise<void>>();
+  private progress = {
+    decisions: { startedAt: 0, completedAt: 0 },
+    market: { startedAt: 0, completedAt: 0 },
+  };
+  constructor(private observedDeps: SourceDeps) { super(observedDeps); }
   beforeTick?: () => void;
-  private track(task: Promise<void>): Promise<void> {
-    this.pending.add(task);
-    return task.finally(() => this.pending.delete(task));
+  private track(kind: "decisions" | "market", run: () => Promise<void>): Promise<void> {
+    // A skipped overlapping invocation must not mask a hung original invocation.
+    if (this.pending.has(kind)) return Promise.resolve();
+    const now = this.observedDeps.now ?? Date.now;
+    this.progress[kind].startedAt = now();
+    const task = Promise.resolve().then(run).finally(() => {
+      this.progress[kind].completedAt = now();
+      this.pending.delete(kind);
+    });
+    this.pending.set(kind, task);
+    return task;
   }
   override tick(): Promise<void> {
-    this.beforeTick?.();
-    return this.track(super.tick());
+    return this.track("decisions", () => { this.beforeTick?.(); return super.tick(); });
   }
-  override refreshMarket(): Promise<void> { return this.track(super.refreshMarket()); }
-  async drain() { await Promise.allSettled([...this.pending]); }
+  override refreshMarket(): Promise<void> { return this.track("market", () => super.refreshMarket()); }
+  async drain() { await Promise.allSettled(this.pending.values()); }
+  loopHealth(stopped: boolean) {
+    const { cfg } = this.observedDeps;
+    const now = (this.observedDeps.now ?? Date.now)();
+    // Failed requests still count as progress. Only stuck loops need a restart.
+    const stallMs = Math.max(600_000, 20 * cfg.okx.cliTimeoutMs,
+      2 * (cfg.decisionProvider === "jev" ? cfg.jev.timeoutMs : cfg.local.timeoutMs));
+    const loop = (kind: "decisions" | "market", interval: number) => {
+      const running = this.pending.has(kind), { startedAt, completedAt } = this.progress[kind];
+      return { running, startedAt: startedAt || null, completedAt: completedAt || null,
+        stalled: now - ((running ? startedAt : completedAt) || this.startedAt) > stallMs + (running ? 0 : interval) };
+    };
+    const loops = { decisions: loop("decisions", cfg.tickMs), market: loop("market", cfg.dataRefreshMs) };
+    const reasons = [
+      ...(stopped ? ["engine_stopped"] : []),
+      ...(loops.decisions.stalled ? ["decision_loop_stalled"] : []),
+      ...(loops.market.stalled ? ["market_loop_stalled"] : []),
+    ];
+    return { live: reasons.length === 0, reasons, loops, stallMs };
+  }
 }
 
 export class CatfolioEngine {
@@ -128,9 +159,9 @@ export class CatfolioEngine {
         const audit={at:row.ts,source:state?.utc?(row.latencyMs === null || row.inputTokens === 0 ? "rules" : "model_request"):"protection",strategyVersion:STRATEGY_VERSION,rubricVersion:RUBRIC_VERSION,
           entryDiagnostics:diagnostics,strategy:brain.strategy,rubric:brain.convictionLabels,state,
           menu:brain.menu(ctx),account:ctx.bee,market:{ts:ctx.view.ts,instruments:[...ctx.view.instruments],tickers:[...ctx.view.tickers],stats:[...ctx.view.stats]},
-          config:{...decisionConfiguration(this.d.cfg),limits:this.d.cfg.cats[row.bee],risk:this.d.cfg.risk,slippageBps:this.d.cfg.paperSlippageBps,
+          config:{...decisionConfiguration(this.d.cfg),limits:this.d.cfg.cats[row.bee],risk:this.d.cfg.risk,strategyParameters:this.d.cfg.strategies[row.bee],slippageBps:this.d.cfg.paperSlippageBps,
             sourceStyle:brain.id,coachRules:this.d.cfg.slots[row.bee].rules,allowedCoins:this.d.cfg.slots[row.bee].coins,
-            openGate:brain.openGate?{minConviction:brain.openGate.minConviction,minProb:brain.openGate.minProb(ctx)}:null}};
+            openGate:brain.entryGate?.(ctx) ?? (brain.openGate?{minConviction:brain.openGate.minConviction,minProb:brain.openGate.minProb(ctx)}:null)}};
         const saved={...row,latencyMs:row.inputTokens===0?null:row.latencyMs,menuJson:JSON.stringify(brain.menu(ctx)),auditJson:JSON.stringify(audit)};
         const id=db.insertDecision(saved);this.lastDecision.set(row.bee,{id,row:saved,diagnostics});return id;
       },
@@ -169,8 +200,13 @@ export class CatfolioEngine {
   snapshot() {
     const source=this.source.snapshot();
     return {...source,mode:this.d.cfg.mode==="dry"?"PAPER":this.d.cfg.mode.toUpperCase(),cats:BEES.map(id=>this.publicCat(id)),
-      totalStartEquityUsd:this.d.cfg.totalStartEquityUsd,decisionIntervalMs:this.d.cfg.tickMs,protectiveIntervalMs:this.d.cfg.tickMs,
+      configurationWarnings:this.d.cfg.configurationWarnings,totalStartEquityUsd:this.d.cfg.totalStartEquityUsd,decisionIntervalMs:this.d.cfg.tickMs,protectiveIntervalMs:this.d.cfg.tickMs,
       inference:this.d.provider.status(),coach:this.coach.state()};
   }
-  health() { return {...this.source.health(),inference:this.d.provider.status()}; }
+  health() {
+    const ready = this.source.health(), progress = this.source.loopHealth(this.stopped);
+    return { ...ready, ...progress, ok: ready.ok && progress.live,
+      reasons: [...progress.reasons, ...(!ready.ok ? ["market_data_stale"] : [])],
+      marketError: this.d.feed.view().refreshError ?? null, inference: this.d.provider.status() };
+  }
 }

@@ -129,6 +129,44 @@ async function harness(
   };
 }
 describe("Catfolio engine, protection and recovery", () => {
+  it("reports stale market data separately from a running engine and clears it on recovery", async () => {
+    const h = await harness();
+    h.advance(5 * h.cfg.dataRefreshMs + 1);
+    await h.engine.tick();
+    expect(h.engine.health()).toMatchObject({ ok: false, live: true, reasons: ["market_data_stale"] });
+    await h.engine.refreshMarket();
+    expect(h.engine.health()).toMatchObject({ ok: true, live: true, reasons: [] });
+  });
+  it.each(["decisions", "market"] as const)("detects a stalled %s loop even with fresh market data", async which => {
+    const h = await harness();
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    if (which === "decisions") h.feed.refreshTickers = () => blocked;
+    else h.feed.refresh = () => blocked;
+    const pending = which === "decisions" ? h.engine.tick() : h.engine.refreshMarket();
+    try {
+      h.advance(h.engine.health().stallMs + 1);
+      h.feed.lastRefreshAt = NOW + h.engine.health().stallMs + 1;
+      expect(h.engine.health()).toMatchObject({ ok: false, live: false,
+        reasons: expect.arrayContaining([which === "decisions" ? "decision_loop_stalled" : "market_loop_stalled"]),
+        loops: { [which]: { running: true, stalled: true } } });
+      if (which === "decisions") await h.engine.tick();
+      else await h.engine.refreshMarket();
+      expect(h.engine.health().loops[which].stalled).toBe(true);
+    } finally { release(); await pending; }
+    // Refresh completion and a decision completion are independent progress signals.
+    await h.engine.refreshMarket(); await h.engine.tick();
+    expect(h.engine.health()).toMatchObject({ live: true });
+  });
+  it("does not treat repeated settled failures as a frozen loop", async () => {
+    const h = await harness(async () => ({ ok: false, reason: "timeout", latencyMs: 1 }));
+    h.feed.refresh = async () => { throw new Error("exchange temporarily unavailable"); };
+    for (let i = 0; i < 12; i++) {
+      h.advance(60000);
+      await h.engine.refreshMarket(); await h.engine.tick();
+    }
+    expect(h.engine.health()).toMatchObject({ ok: false, live: true, reasons: ["market_data_stale"] });
+  });
   it("uses each cat's allocation for source loss limits and reported returns", async () => {
     const cfg = loadConfig({ TIGER_ALLOCATION_PCT: "75", MOCHI_ALLOCATION_PCT: "25" });
     const h = await harness(undefined, { cfg });
@@ -206,8 +244,8 @@ describe("Catfolio engine, protection and recovery", () => {
       .get("tiger") as { audit: string };
     const audit = JSON.parse(row.audit);
     expect(audit).toMatchObject({
-      strategyVersion: "catfolio-6-active-momentum",
-      rubricVersion: "upstream-style-conviction-1",
+      strategyVersion: "catfolio-7-configurable-strategies",
+      rubricVersion: "selected-setup-conviction-2",
       config: { model: "", slippageBps: 2 },
     });
     expect(audit.market.tickers).toHaveLength(1);
@@ -237,7 +275,7 @@ describe("Catfolio engine, protection and recovery", () => {
       { provider: "jev", requestedModel: "jev-1.13.0" },
     ]);
     for (const c of report.cats) {
-      const recordedCost = c.cat === "tiger" ? 0.001 : 0; // Invalid choices have no successful source result.
+      const recordedCost = 0.001; // WAIT is now a valid model choice for both cats.
       expect(c.estimatedInferenceCostUsd).toBe(recordedCost);
       expect(c.netPnlUsd).toBe(0);
       expect(c.netPnlAfterEstimatedInferenceUsd).toBe(0 - recordedCost);
@@ -338,7 +376,7 @@ describe("Catfolio engine, protection and recovery", () => {
     bad.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  it("persists source Breezy entry score and allows subsequent trims after restart; stops still protect", async () => {
+  it("persists the completed trim across restart and never trims again; stops still protect", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cat-trim-")), path = join(dir, "run.sqlite");
     const choose: DecisionProvider["decide"] = async ask => answer(ask,
       ask.menu.TRIM_HALF ? "TRIM_HALF" : ask.menu.HOLD ? "HOLD" : ask.menu.LONG_BTC ? "LONG_BTC" : "WAIT");
@@ -356,8 +394,8 @@ describe("Catfolio engine, protection and recovery", () => {
     second.advance(10_000); // A restart happens later than the preceding source order timestamp.
     second.s.trend!.score = 6;
     await second.engine.tick();
-    expect(second.engine.bees.mochi.position!.contracts).toBeLessThan(remaining);
-    expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trim'").all()).toHaveLength(2);
+    expect(second.engine.bees.mochi.position!.contracts).toBe(remaining);
+    expect(second.db.raw.prepare("SELECT * FROM orders WHERE purpose='trim'").all()).toHaveLength(1);
     second.engine.bees.mochi.position!.stopPx = 101;
     await second.engine.tick();
     expect(second.engine.bees.mochi.position).toBeNull();
@@ -571,14 +609,14 @@ describe("automatic coach changes in the running engine", () => {
     await h.engine.coach.tick();
     const pending = h.engine.coach.state().entries.find((e) => e.cat === "tiger")!;
     expect(pending.status).toBe("accepted");
-    expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
     expect(h.cfg.slots.tiger.coins).toEqual(["BTC"]);
     expect(h.engine.bees.tiger.position).toBeNull();
     await h.engine.tick(); expect(h.engine.bees.tiger.position).not.toBeNull();
     expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(h.engine.bees.tiger.position!.entryPx * (1 - 0.005 * h.cfg.cats.tiger.stopAtrMult));
     expect(h.engine.bees.mochi.position).toBeNull();
     h.engine.coach.reset("tiger");
-    expect(h.cfg.cats.tiger.minTrendScore).toBe(3);
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
     expect(h.engine.bees.tiger.position!.stopPx).toBeCloseTo(h.engine.bees.tiger.position!.entryPx * (1 - 0.005 * h.cfg.cats.tiger.stopAtrMult));
   });
   it("discards in-flight decisions when automatic rules change", async () => {
@@ -603,17 +641,19 @@ describe("automatic coach changes in the running engine", () => {
 
 describe("restored source actions reach the executor", () => {
   function pick(ask: DecisionAsk, choice: string) {
-    if (ask.menu.WAIT || ask.menu.HOLD) return answer(ask, ask.menu.HOLD ? "HOLD" : "WAIT");
+    if (ask.strategy.includes("Dark Wall-E")) return answer(ask, ask.menu.HOLD ? "HOLD" : "WAIT");
     return answer(ask, choice);
   }
   it("opens a short and adds to the winner without resetting its stop, entry score or opening count", async () => {
     let choice = "SHORT_BTC";
     const cfg = loadConfig({MOCHI_COOLDOWN_MINUTES:"0"});
     const h = await harness(async ask => pick(ask, choice), {cfg});
+    h.s.trend!.score = -9;
     await h.engine.tick();
+    h.engine.bees.mochi.position!.stopPx = 99; // A trailed stop frees risk budget for a winner add.
     const before = structuredClone(h.engine.bees.mochi.position!);
     expect(before.side).toBe("short");
-    expect(before.stopPx).toBeGreaterThan(before.entryPx);
+    expect(before.initialStopPx).toBeGreaterThan(before.entryPx);
     h.s.mid=95;
     Object.assign(h.v.tickers.get(h.s.instId)!,{mid:95,bid:94.995,ask:95.005});
     choice="ADD_TO_WINNER";
@@ -636,11 +676,13 @@ describe("restored source actions reach the executor", () => {
     const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"})});
     await h.engine.tick();
     expect(h.engine.bees.mochi.position!.side).toBe("long");
-    choice="SHORT_BTC"; await h.engine.tick();
+    choice="SHORT_BTC"; h.s.trend!.score=-9; await h.engine.tick();
+    expect(h.engine.bees.mochi.position).toBeNull();
+    await h.engine.tick();
     expect(h.engine.bees.mochi.position!.side).toBe("short");
     expect(h.engine.bees.mochi.tradesToday).toBe(2);
     expect(h.db.raw.prepare("SELECT purpose,side,reduce_only FROM orders WHERE bee='mochi' ORDER BY id").all()).toEqual([
-      {purpose:"open",side:"buy",reduce_only:0},{purpose:"switch_close",side:"sell",reduce_only:1},{purpose:"open",side:"sell",reduce_only:0},
+      {purpose:"open",side:"buy",reduce_only:0},{purpose:"trend_reversal",side:"sell",reduce_only:1},{purpose:"open",side:"sell",reduce_only:0},
     ]);
   });
   it.each(["rejected","unknown","partial"] as const)("does not open the switch leg after a %s close",async outcome=>{
@@ -653,25 +695,23 @@ describe("restored source actions reach the executor", () => {
         : sim.market(id,req),
     })});
     await h.engine.tick(); const original=h.engine.bees.mochi.position!.contracts;
-    choice="SHORT_BTC";await h.engine.tick();
+    choice="SHORT_BTC";h.s.trend!.score=-9;await h.engine.tick();
     expect(h.engine.bees.mochi.position!.side).toBe("long");
     expect(h.engine.bees.mochi.tradesToday).toBe(1);
     expect(h.db.raw.prepare("SELECT * FROM orders WHERE bee='mochi' AND reduce_only=0").all()).toHaveLength(1);
     expect(h.engine.bees.mochi.position!.contracts).toBe(outcome==="partial" ? original-Math.floor(original/2) : original);
   });
-  it("runs upstream flat forcing and rebalance in the decision loop, and suspends both on model failure",async()=>{
-    let unavailable=false;
-    const h=await harness(async ask=>ask.menu.WAIT ? answer(ask,"WAIT") : unavailable
-      ? {ok:false,reason:"timeout",latencyMs:1}
-      : {...answer(ask,ask.menu.HOLD_WINNER ? "HOLD_WINNER":"LONG_BTC"),conviction:0});
+  it("does not force weak entries or rebalance a held position",async()=>{
+    let choice="LONG_BTC", conviction=0;
+    const h=await harness(async ask=>ask.strategy.includes("Dark Wall-E") ? answer(ask,"WAIT")
+      : {...answer(ask,choice),conviction});
     await h.engine.tick();
-    expect(h.engine.bees.mochi.position).not.toBeNull();
-    expect(h.db.raw.prepare("SELECT forced_by FROM decisions WHERE bee='mochi' ORDER BY id DESC LIMIT 1").get()).toMatchObject({forced_by:"max_flat"});
-    h.engine.bees.mochi.position!.contracts=10;
-    unavailable=true;await h.engine.tick();
-    expect(h.engine.bees.mochi.position!.contracts).toBe(10);
-    unavailable=false;await h.engine.tick();
-    expect(h.engine.bees.mochi.position!.contracts).toBeGreaterThan(10);
-    expect(h.db.raw.prepare("SELECT forced_by FROM decisions WHERE bee='mochi' ORDER BY id DESC LIMIT 1").get()).toMatchObject({forced_by:"rebalance"});
+    expect(h.engine.bees.mochi.position).toBeNull();
+    expect(h.db.raw.prepare("SELECT vetoed_by,forced_by FROM decisions WHERE bee='mochi' ORDER BY id DESC LIMIT 1").get()).toMatchObject({forced_by:null,vetoed_by:expect.stringContaining("weak_conviction")});
+    conviction=3;await h.engine.tick();
+    h.engine.bees.mochi.position!.contracts=1;
+    choice="HOLD_WINNER";await h.engine.tick();
+    expect(h.engine.bees.mochi.position!.contracts).toBe(1);
+    expect(h.db.raw.prepare("SELECT * FROM orders WHERE purpose='add'").all()).toHaveLength(0);
   });
 });

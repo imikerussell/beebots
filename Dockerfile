@@ -23,5 +23,5 @@ USER node
 ENV HOME=/home/node
 RUN sh ./scripts/okx-profiles.sh
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s CMD node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s CMD node -e "fetch('http://127.0.0.1:8080/live',{signal:AbortSignal.timeout(4000)}).then(async r=>{if(!r.ok)console.error(await r.text());process.exit(r.ok?0:1)}).catch(e=>{console.error(e.message);process.exit(1)})"
 CMD ["node", "--disable-warning=ExperimentalWarning", "dist/index.js"]

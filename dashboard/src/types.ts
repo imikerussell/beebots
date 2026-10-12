@@ -56,6 +56,11 @@ export interface Snapshot {
     latencyMs: number | null;
     connected: boolean;
     error: string | null;
+    lastRequestAt?: number | null;
+    lastSuccessAt?: number | null;
+    activeRequests?: number;
+    queuedRequests?: number;
+    retryAt?: number | null;
   };
   market: { refreshedAt: number };
   coach?: CoachState;
@@ -130,8 +135,8 @@ export interface EntryDiagnostic {
 }
 
 export type CoachField = "minTrendScore" | "minActionProbability" | "minConviction";
-export interface TrainerReview { idea: string; rules: string; coins: string; reason: string; quip: string; note: string }
-export interface CoachRules { rules: string; coins: string[] }
+export interface TrainerReview { parameterChanges?: Array<{field: string; from: number; to: number}>; idea: string; rules: string; coins: string; reason: string; quip: string; note: string }
+export interface CoachRules { rules: string; coins: string[]; parameters?: Record<string, number> }
 export interface CoachContext {
   diagnostics?: EntryDiagnostic[];
   account?: { pnlUsd: number; pnlPct: number; tradesToday: number; maxTradesPerDay: number; position: { coin: string; side: string } | null };

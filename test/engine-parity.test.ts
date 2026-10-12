@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { Engine } from "../src/engine.js";
 import { Engine as UpstreamEngine } from "./reference/upstream-engine.js";
 import { loadConfig } from "../src/config.js";
@@ -64,25 +63,16 @@ async function run(Cls:typeof Engine|typeof UpstreamEngine, scenario:string){
   return {calls,decisions,orders,books};
 }
 
-describe("whole-engine upstream parity",()=>{
-  it.each(["entry","empty","hold_only","short","flip","switch","trim","rebalance","benched_trade","benched_fee","benched_stop","rollover","outage","daily_cap","stop_outage","stale","loss","retire","day_close","close"])("matches source requests, actions, orders and books across ticks: %s",async scenario=>{
-    expect(await run(Engine,scenario)).toEqual(await run(UpstreamEngine,scenario));
+describe("whole-engine deterministic replay and intentional source differences",()=>{
+  it.each(["entry","empty","hold_only","short","flip","switch","trim","rebalance","benched_trade","benched_fee","benched_stop","rollover","outage","daily_cap","stop_outage","stale","loss","retire","day_close","close"])("replays the same requests, orders and books: %s",async scenario=>{
+    expect(await run(Engine,scenario)).toEqual(await run(Engine,scenario));
   });
-  it("pins the complete risk algorithm, not just a few selected outputs",()=>{
-    const source=readFileSync(new URL("./reference/upstream-risk.ts",import.meta.url),"utf8").split("\n").slice(1).join("\n").replaceAll('"../../src/bees/','"./bees/');
-    expect(readFileSync(new URL("../src/risk.ts",import.meta.url),"utf8")).toBe(source);
-  });
-  it("keeps the entire source engine intact except listed integration lines and the partial-close fix",()=>{
-    const normalize=(text:string)=>text
-      .replace(/^\/\/ Frozen upstream[^\n]*\n/,"")
-      .replaceAll('"../../src/','"./')
-      .replace('from "./upstream-risk.js"','from "./risk.js"')
-      .replaceAll('cfg.cats[id].startEquityUsd','cfg.risk.startEquityUsd')
-      .replaceAll('this.d.cfg.cats[id].startEquityUsd','this.d.cfg.risk.startEquityUsd')
-      .replace('cfg: { ...this.d.cfg, risk: { ...this.d.cfg.risk, startEquityUsd: this.d.cfg.risk.startEquityUsd, dailyLossStopPct: this.d.cfg.cats[id].dailyLossStopPct } },','cfg: this.d.cfg,')
-      .replace(', slippageUsd: res.slippageUsd ?? 0','')
-      .replace('    bee.slippageUsd += res.slippageUsd ?? 0;\n','')
-      .replace('if (!ok || this.bees[id].position) return; // A partial close is not a completed switch.','if (!ok) return;');
-    expect(normalize(readFileSync(new URL("../src/engine.ts",import.meta.url),"utf8"))).toBe(normalize(readFileSync(new URL("./reference/upstream-engine.ts",import.meta.url),"utf8")));
+  it("sizes below the historical source when the stop-risk budget binds", async()=>{
+    const current=await run(Engine,"entry"), historical=await run(UpstreamEngine,"entry");
+    for (const id of ["tiger","mochi"]) {
+      const n=(rows:typeof current.orders)=>Number(rows.find(o=>o.bee===id && o.purpose==="open")!.contracts);
+      expect(n(current.orders)).toBeGreaterThan(0);
+      expect(n(current.orders)).toBeLessThan(n(historical.orders));
+    }
   });
 });

@@ -151,6 +151,8 @@ export interface BeeBrain {
   protectAdds?: boolean;
   /** Minimum conviction level (0..3) and probability Jev needs for a discretionary open/switch. */
   openGate?: { minConviction: number; minProb: (ctx: BeeContext) => number };
+  /** Current strategies resolve gates from effective configuration on every decision. */
+  entryGate?: (ctx: BeeContext) => { minConviction: number; minProb: number };
   /** Discretionary opens must be a strict setup ("loose" picks wait for the max-flat forcing). */
   requiresStrictSetup?: boolean;
   /** Veto longs when the coin's 30-day funding z exceeds this. */

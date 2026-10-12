@@ -89,6 +89,81 @@ async function mock(
 const config = () =>
   loadConfig({ DECISION_PROVIDER: "jev", TYPESAFE_API_KEY: "mock-key" });
 describe("explicit Jev selection, mock HTTP only", () => {
+  it.each(["headers", "body"])("recovers after a hung %s reader ignores abort, and discards its late result", async (stage) => {
+    let finish!: (value: Response) => void;
+    let finishBody!: (value: unknown) => void;
+    const stalled = new Promise<Response>(resolve => { finish = resolve; });
+    const body = new Promise<unknown>(resolve => { finishBody = resolve; });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockImplementationOnce(async () => stage === "headers" ? stalled : { json: () => body, ok: true, status: 200 } as Response)
+      .mockImplementation(async () => Response.json(response()));
+    const cfg = config(); cfg.jev.timeoutMs = 30;
+    const p = new Jev(cfg.jev, undefined, fetcher);
+    expect(await p.decide(ask)).toMatchObject({ ok: false, reason: "timeout" });
+    expect(p.status()).toMatchObject({ activeRequests: 0, queuedRequests: 0, connected: false });
+    expect(await p.decide(ask)).toMatchObject({ ok: true });
+    const recovered = p.status();
+    finish(Response.json(response())); finishBody(response());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(p.status()).toEqual(recovered);
+    expect(p.status()).toMatchObject({ requests: 2, failures: 1, connected: true, estimatedSpentTodayUsd: 0.000042 });
+    p.close();
+  });
+  it("shutdown drains active and queued calls even when the transport ignores abort", async () => {
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    const p = new Jev(config().jev, undefined, fetcher);
+    const first = p.decide(ask), queued = p.decide(ask);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    p.close();
+    expect(await first).toMatchObject({ ok: false, reason: "timeout" });
+    expect(await queued).toMatchObject({ ok: false, reason: "timeout" });
+    expect(p.status()).toMatchObject({ activeRequests: 0, queuedRequests: 0 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("recovers from a real HTTP connection whose response body never finishes", async () => {
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      if (++requests === 1) res.write("{");
+      else res.end(JSON.stringify(response()));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    servers.push(server);
+    const cfg = config(); cfg.jev.timeoutMs = 100;
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const p = new Jev(cfg.jev, undefined, (_url, init) => fetch(origin, init));
+    expect(await p.decide(ask)).toMatchObject({ ok: false, reason: "timeout" });
+    expect(await p.decide(ask)).toMatchObject({ ok: true });
+    expect(requests).toBe(2);
+    p.close();
+  });
+  it("bounds a hung local model preflight without sending a decision afterwards", async () => {
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    const cfg = loadConfig({ LM_STUDIO_MODEL: "test" });
+    const p = new LmStudio({ ...cfg.local, timeoutMs: 30 }, fetcher);
+    expect(await p.decide(ask)).toMatchObject({ ok: false, reason: "timeout" });
+    expect(p.status()).toMatchObject({ activeRequests: 0, queuedRequests: 0 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]![0])).toContain("/api/v1/models");
+    p.close();
+  });
+  it.each([429, 502, 503])("backs off on non-JSON HTTP %i and automatically recovers on the next eligible cycle", async status => {
+    let now = Date.now();
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("gateway unavailable", { status }))
+      .mockImplementation(async () => Response.json(response()));
+    const p = new Jev(config().jev, undefined, fetcher, () => now);
+    expect(await p.decide(ask)).toMatchObject({ ok: false, error: { message: expect.stringContaining(`HTTP ${status}`) } });
+    expect(p.status()).toMatchObject({ retryAt: now + 60000 });
+    now += 59999;
+    expect((await p.decide(ask)).ok).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    now++;
+    expect((await p.decide(ask)).ok).toBe(true);
+    expect(p.status()).toMatchObject({ connected: true, error: null, retryAt: null });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    p.close();
+  });
   it.each(["typesafe", "vercel"])("accepts separately rounded Jev scores through %s without changing the returned numbers", async (transport) => {
     const cfg = loadConfig({ DECISION_PROVIDER: "jev", JEV_TRANSPORT: transport,
       TYPESAFE_API_KEY: "test-direct", AI_GATEWAY_API_KEY: "test-gateway" });

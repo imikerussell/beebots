@@ -15,6 +15,7 @@ export default defineConfig({
         "/equity",
         "/visit",
         "/health",
+        "/live",
         "/profile",
         "/report",
         "/coach",

@@ -1,6 +1,6 @@
 import type { Menu } from "./bees/types.js";
-export const STRATEGY_VERSION = "catfolio-6-active-momentum";
-export const RUBRIC_VERSION = "upstream-style-conviction-1";
+export const STRATEGY_VERSION = "catfolio-7-configurable-strategies";
+export const RUBRIC_VERSION = "selected-setup-conviction-2";
 export const CONVICTION = [
   "0: No confirmed setup; insufficient or conflicting evidence",
   "1: Weak setup; some confirmation but material conflicts",
@@ -50,6 +50,11 @@ export interface DecisionProvider {
     latencyMs: number | null;
     connected: boolean;
     error: string | null;
+    lastRequestAt?: number | null;
+    lastSuccessAt?: number | null;
+    activeRequests?: number;
+    queuedRequests?: number;
+    retryAt?: number | null;
   };
   close?(): void;
 }

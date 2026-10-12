@@ -6,20 +6,21 @@ import { NOW, position } from "./fixtures.js";
 import { riskFixture } from "./risk-fixture.js";
 
 describe("restored source risk behavior", () => {
-  it("Dark waits without a qualifying momentum signal; Breezy restores its strongest directional position", () => {
+  it("Dark waits without a qualifying momentum signal; Good also waits for an accepted model entry", () => {
     const t = riskFixture(), m = riskFixture("mochi");
     t.s.ret1hPct = 0; t.b.flatSince = NOW - 86400000;
     expect(t.run(null).action.kind).toBe("none");
     m.s.trend!.score = -9;
-    expect(m.run(null)).toMatchObject({action:{kind:"open",side:"short"},forcedBy:"max_flat"});
+    expect(m.run(null)).toMatchObject({action:{kind:"none"},forcedBy:null});
     expect(m.run(null,false).action.kind).toBe("none");
   });
-  it.each(["tiger","mochi"] as const)("%s uses upstream leverage/headroom sizing, lot floors and explicit account caps", id=>{
+  it.each(["tiger","mochi"] as const)("%s uses stop-risk sizing, lot floors and explicit account caps", id=>{
     const h=riskFixture(id), result=h.run();
     expect(result.action.kind).toBe("open");
     if(result.action.kind!=="open") throw Error(result.status);
     expect(result.action.notionalUsd).toBeLessThanOrEqual(maxNotionalUsd(h.ctx));
-    expect(result.action.notionalUsd).toBeGreaterThan(100); // source exposure is no longer capped at 50% or stop-risk budget
+    expect(result.action.notionalUsd).toBeGreaterThan(0);
+    expect(result.action.notionalUsd).toBeLessThan(100);
     h.cfg.cats[id].maxNotionalPct=50;
     const limited=h.run().action;
     expect(limited.kind).toBe("open");
@@ -47,21 +48,20 @@ describe("restored source risk behavior", () => {
       expect(h.run(null,false).forcedBy).toBe("stop");
     }
   });
-  it("restores discretionary add, trim, flip and code-driven rebalance",()=>{
-    const h=riskFixture("mochi");h.b.position=position(h.s,{contracts:10,stopPx:90,entryScore:9});h.ctx.uplR=2;
+  it("allows winner adds and one deterioration trim, but never auto-rebalances",()=>{
+    const h=riskFixture("mochi");h.b.position=position(h.s,{contracts:1,stopPx:99,entryScore:9});h.ctx.uplR=2;
     const choose=(label:string)=>h.run({...h.proposal,label,intent:h.brain.menu(h.ctx)[label]!.intent});
     expect(choose("ADD_TO_WINNER").action.kind).toBe("add");
-    expect(choose("SHORT_BTC").action).toMatchObject({kind:"switch",side:"short"});
     h.s.trend!.score=6;
     expect(choose("TRIM_HALF").action.kind).toBe("trim");
-    expect(h.run(null)).toMatchObject({action:{kind:"add"},forcedBy:"rebalance"});
+    expect(h.run(null)).toMatchObject({action:{kind:"none"},forcedBy:null});
     expect(h.run(null,false).action.kind).toBe("none");
   });
-  it("source discretionary cooldown applies to adds and switches",()=>{
-    const h=riskFixture("mochi");h.b.position=position(h.s,{contracts:120,stopPx:90});h.ctx.uplR=2;
+  it("discretionary cooldown applies to winner adds",()=>{
+    const h=riskFixture("mochi");h.b.position=position(h.s,{contracts:1,stopPx:99});h.ctx.uplR=2;
     h.b.lastOrderAt=NOW-1000;
     const menu=h.brain.menu(h.ctx);
-    expect(h.run({...h.proposal,label:"SHORT_BTC",intent:menu.SHORT_BTC!.intent}).vetoedBy).toMatch(/cooldown/);
+    expect(h.run({...h.proposal,label:"ADD_TO_WINNER",intent:menu.ADD_TO_WINNER!.intent}).vetoedBy).toMatch(/cooldown/);
   });
   it("source risk holds new exposure when the full market refresh is stale",()=>{
     const h=riskFixture();

@@ -1,7 +1,7 @@
 import type { StyleId } from "../settings.js";
 import { activeBizzy as bizzy } from "./active-bizzy.js";
 import { boozy } from "./boozy.js";
-import { breezy } from "./breezy.js";
+import { activeBreezy as breezy } from "./active-breezy.js";
 import type { BeeBrain } from "./types.js";
 
 /** One brain per trading style. */

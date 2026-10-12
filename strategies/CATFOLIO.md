@@ -1,37 +1,24 @@
-# Catfolio: upstream engine restoration
+# Catfolio configurable strategies
 
-Source baseline: [imikerussell/beebots commit 6d3fe0d4f72dd25676c2f5caac0b83dff05031fb](https://github.com/imikerussell/beebots/tree/6d3fe0d4f72dd25676c2f5caac0b83dff05031fb), the upstream commit immediately before the Catfolio conversion. Current strategy version: `catfolio-6-active-momentum`; the source-engine restoration was `catfolio-5-source-engine`.
+Current strategy version: `catfolio-7-configurable-strategies`; rubric version: `selected-setup-conviction-2`. The lifecycle originated from [beebots 6d3fe0d](https://github.com/imikerussell/beebots/tree/6d3fe0d4f72dd25676c2f5caac0b83dff05031fb). Current strategies deliberately differ from that baseline. The historical Bizzy/Breezy modules and frozen engine/risk references remain for comparison, not as the active strategy contract.
 
-## What runs
+## Strategies
 
-`src/engine.ts` is restored from that upstream file: lifecycle, serialized ticks, menus and model calls, benched-cap handling, funding, reconciliation, profit locks, close/resume behavior, order construction and fill processing. `src/risk.ts`, `src/lab/brain.ts`, `src/bees/breezy.ts`, `src/bees/custom.ts` and `src/snapshot.ts` match the baseline exactly.
+- Dark (`tiger`): symmetric one-hour momentum and 15-minute MACD across its allowed coins. Configurable absolute and ATR-relative momentum thresholds, continuous conviction and selected-action probability gates, 15-minute ATR stops and maximum holding time. WAIT, HOLD, CLOSE and qualified reversals remain supported. No forced entries.
+- Good (`mochi`): nine Donchian channels on four-hour BTC/ETH bars. Configurable minimum directional score, conviction/probability gates, score/volatility sizing, four-hour ATR stops, one trim per position, qualified winner adds and maximum holding time. It waits without an accepted entry and closes on a qualified opposite trend. No forced entries, minimum exposure floor or automatic rebalancing.
 
-- Dark Wall-E (`tiger`) uses Catfolio's `src/bees/active-bizzy.ts`: symmetric intraday long/short momentum across 12 coins, 12 new positions/day, five-minute cooldown, ATR stops and a two-hour time limit. The original daily Bizzy module is retained as a historical reference, but is no longer selected by `BRAINS.bizzy`. See [active strategy](ACTIVE_WALL_E.md).
-- Good Wall-E (`mochi`) runs Breezy: nine Donchian horizons on four-hour bars, BTC/ETH, both directions, volatility sizing with the original floor, +1R adds, three-point directional trims, flips, coin switches, channel trailing, flat forcing and target rebalancing. Three new positions/day by default.
+Both obey owner-defined stop-risk budgets including estimated round-trip costs, in addition to notional/leverage caps and lot minimums. The trainer can change only the supported numeric strategy fields within published bounds; capital and loss limits remain fixed by the owner. See [CONFIGURATION](../docs/CONFIGURATION.md) for exact settings, evidence checks, persistence and migration.
 
-The engine file has only these deliberate differences from the baseline:
+## Execution and protection
 
-1. Dependency imports use structural interfaces for the Catfolio database/provider/coach adapters.
-2. Initial capital, reported returns and daily-loss context use each cat's configured allocation.
-3. Slippage is recorded for Catfolio reports.
-4. A switch cannot open its new leg if the close left any existing position. This fixes the upstream partial-close case.
+The engine uses a serialized trading tick, normally ten seconds, and a separate history refresh. Stops, loss/retirement limits, maximum holding times and Good's trend-reversal exit are deterministic. An already-triggered close bypasses its model call. There is still no independently scheduled protective order loop; outstanding inference can delay later ticks. Model failure prevents new exposure.
 
-`src/catfolio-engine.ts` surrounds that engine with provider selection, the four-hour automatic trainer, audit records, dashboard events, capital validation and graceful shutdown. It does not implement another trading tick, action-selection path or protection loop. `src/cats.ts` binds cat identities and supplies descriptions/diagnostics through the upstream rules/coin wrapper.
+Daily entry/fee caps suppress openings, while deterministic exits remain available. Adds do not increment the new-position counter; switches/new entries do. A partial/rejected close cannot open the second leg of a switch. A filled trim records its one-time flag in the persisted position. Trainer changes invalidate in-flight decisions; numeric changes require a flat account.
 
-## Source behavior and integration boundaries
+Paper execution uses fresh quotes, bid/ask, adverse slippage and fees. Funding is an eight-hour approximation with no downtime backfill. Liquidation, queue/depth and market impact are not simulated. The fill, initial stop and account save are not one crash-atomic exchange transaction; these changes do not establish crash-atomic execution guarantees.
 
-A single serialized trading tick defaults to 10 seconds; market-history refresh defaults to 60 seconds. Stops and other deterministic exits run inside those trading ticks. An outstanding model request delays the next tick and its protection checks until the request resolves or times out. There is no independent five-second protection loop. Empty menus and a lone legal hold do not call the model; already-benched trade/fee caps use the original deterministic management path.
+## Verification
 
-Source risk ordering is unchanged: stops/loss/retirement, model failure holds, discretionary opening gates, flat forcing, then position rebalancing. Forced entry and rebalance intentionally do not use the discretionary opening cooldown. Adds do not increment the new-position counter; switches do.
+Tests exercise both long/short directions, parameter changes affecting real menus and risk actions, stop-risk sizing, fee estimates, lot floors, weak-entry abstention, persistent one-time trims, winner adds, timed and trend-reversal exits during outages, caps, partial closes, restarts, trainer evidence/step/bounds checks and numeric rollback. Deterministic multi-tick replay checks orders and balances. Frozen source comparisons remain for retained legacy paths; byte-for-byte parity is no longer a requirement for the current engine.
 
-Source sizing uses leverage x equity x 0.97, capped by `MAX_NOTIONAL_USD_PER_BEE`. Catfolio's explicit per-cat notional ceilings remain supported (default 200%). Accounts retain configured capital and daily loss limits (default 8%). The old replacement engine's stop-risk sizing, bullish-only gate, minimum trend score and fee-distance filter remain absent. Dark's new strategy adds symmetric momentum eligibility, per-coin freshness checks and a two-hour time exit inside the existing brain interface.
-
-The market feed still validates completed candles and previous-day ranges; execution adapters still validate quotes. Lot sizing retains finite-value validation and floors orders to stay within their budget; the paper simulator retains configured adverse slippage (default 2 bps). These are retained execution/data differences from upstream. Provider requests retain transport timeouts and response validation. The adapter rejects a response when coach rules changed during the request. These integrations do not reintroduce the replacement engine's per-coin risk gates, stale-response age checks or separate protective scheduler.
-
-Persistence follows the source engine's ordering: decisions, orders, execution, ledger/fill updates and account saves. A fill and its initial stop/account save are not one atomic transaction. Do not assume the replacement engine's crash-atomic fill guarantee. The adapter preserves allocation checks and rejects interrupted paper orders on startup; it does not reconstruct missing ledger updates after a process crash.
-
-## Upgrade and verification
-
-Set `DECISION_INTERVAL_MS=10000` for the upstream cadence. `PROTECTIVE_INTERVAL_MS` and `MAX_DECISION_AGE_MS` no longer control the engine. Existing explicit leverage, notional, trade-cap and cooldown overrides still apply; compare the deployed environment with `.env.example`. Database history, balances and positions are preserved without replacement capital. Earlier strategy migrations and trainer review history remain intact.
-
-Regression tests run the restored and frozen upstream engines through the same multi-tick scenarios and compare model requests, orders, decisions, caps, balances and positions. Coverage includes entries, holds, empty menus, shorts, flips, switches, trims, rebalances, benched caps, rollover, model outages, budget caps, stops, stale data, daily loss, retirement and experiment closure. File comparisons allow only the explicit integration differences listed above. Bizzy source comparisons permit only the expanded coin constant and its prompt wording. Adapter tests cover dashboard/audit reporting, persistence, allocation checks, coach changes and partial/rejected closes. Engine parity tests feed both lifecycle implementations the same current brains; they verify lifecycle and risk parity, not that Dark still follows the retired daily strategy. Separate active-strategy tests cover symmetric signals, model-chosen shorts, reversals, repeat entries, stops and time exits. These tests verify behavior, not profitability.
+These checks verify mechanics. They do not establish profitable thresholds, a durable trading advantage or the quality of live trainer optimization. Preserve the existing ledger and compare new-strategy outcomes after costs before increasing capital or leverage.

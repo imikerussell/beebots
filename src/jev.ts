@@ -51,8 +51,10 @@ export class Jev extends SystemOneClient {
               "Jev rate-limit backoff; protective checks continue",
             );
         },
-        observeResponse: (raw, status) => {
+        observeStatus: (status) => {
           if (status === 429 || status >= 500) backoffUntil = now() + 60000;
+        },
+        observeResponse: (raw) => {
           const tokens = (raw as { usage?: { input_tokens?: unknown } } | null)
             ?.usage?.input_tokens;
           if (
@@ -70,11 +72,13 @@ export class Jev extends SystemOneClient {
     this.budgetStatus = () => ({
       estimatedSpentTodayUsd: ledger.spent(day()),
       dailyUsdCap: opts.dailyUsdCap,
+      retryAt: backoffUntil > now() ? backoffUntil : null,
     });
   }
   private budgetStatus: () => {
     estimatedSpentTodayUsd: number;
     dailyUsdCap: number;
+    retryAt: number | null;
   };
   override status() {
     return { ...super.status(), ...this.budgetStatus() };

@@ -20,6 +20,9 @@ describe("pinned upstream trading behavior (6d3fe0d)",()=>{
   it.each(["tiger","mochi"] as const)("%s risk actions match the frozen source oracle for valid market inputs",id=>{
     for(const scenario of ["entry","weak","flat","outage","cap","fee","loss","retired","stop","hold","add","flip","trim","cooldown","stale"]){
       const h=riskFixture(id);
+      h.brain.entryGate = undefined; // Compare legacy gates with a nonbinding stop-risk budget.
+      h.cfg.cats[id].stopRiskPct = 100;
+      h.brain.protectiveExit = undefined;
       let proposal:Proposal|null=h.proposal;
       if(["hold","add","flip","trim","cooldown","stop"].includes(scenario)){
         h.b.position=position(h.s,{contracts:10,stopPx:90,entryScore:9});

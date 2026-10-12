@@ -78,6 +78,25 @@ describe("kit public client (vendored)", () => {
 });
 
 describe("in-process public market data", () => {
+  it.each(["headers", "body"])("releases hung %s requests, clears in-flight sharing, and accepts fresh data", async stage => {
+    let calls = 0;
+    const fetcher: typeof fetch = async () => {
+      calls++;
+      if (calls <= 2) return stage === "headers"
+        ? new Promise<Response>(() => {})
+        : { text: () => new Promise<string>(() => {}) } as Response;
+      return ok([{ price: "101" }])();
+    };
+    const { r } = rest(fetcher, { timeoutMs: 20, maxConcurrent: 1 });
+    const options = { ttlMs: 0, demo: false };
+    const first = r.get("/api/v5/market/tickers", {}, options);
+    const shared = r.get("/api/v5/market/tickers", {}, options);
+    expect(shared).toBe(first);
+    await expect(first).rejects.toThrow(/Failed to call OKX/);
+    expect(r.stats.retries).toBe(1);
+    expect(await r.get("/api/v5/market/tickers", {}, options)).toEqual([{ price: "101" }]);
+    expect(calls).toBe(3);
+  });
   it("GETs the same endpoint and params the CLI used, never HEAD, no auth headers", async () => {
     const m = mockFetch([ok(CANDLES)]);
     const api = createPublicApi("https://eea.okx.com", false, rest(m.fn).r);

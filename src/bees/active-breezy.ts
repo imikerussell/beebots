@@ -1,0 +1,79 @@
+// Configurable Donchian strategy. breezy.ts preserves the historical source brain.
+import { breezy, strongerCoin } from "./breezy.js";
+import { maxNotionalUsd, positionNotional } from "./common.js";
+import type { CoinStats } from "../market/types.js";
+import type { BeeBrain, BeeContext, Intent, Menu } from "./types.js";
+
+export function trendEntryBlockers(s: CoinStats, ctx: BeeContext): string[] {
+  const age = ctx.now - (s.refreshedAt ?? ctx.view.ts), limits = ctx.cfg.cats[ctx.bee.id];
+  if (age < 0 || age > 3 * ctx.cfg.dataRefreshMs) return ["stale_indicators"];
+  const reasons: string[] = [];
+  if (!ctx.cfg.slots[ctx.bee.id].coins.includes(s.coin)) reasons.push("coin_not_allowed");
+  if (!ctx.view.gated.includes(s.instId)) reasons.push("market_universe_gate");
+  if (!(s.vol24hUsd >= limits.minVolumeUsd)) reasons.push("liquidity_gate");
+  if (!(s.spreadBp <= limits.spreadGateBps)) reasons.push("spread_gate");
+  if (!s.trend) return [...reasons, "missing_trend_data"];
+  if (s.trend.slicesAvailable < 9) reasons.push("incomplete_trend_history");
+  if (!Number.isFinite(s.trend.score) || Math.abs(s.trend.score) < ctx.cfg.strategies.mochi.minTrendScore) reasons.push("minTrendScore");
+  if (!(s.trend.atr4hPct! > 0) || !Number.isFinite(s.trend.atr4hPct) || s.trend.atr4hPct! * limits.stopAtrMult >= 100) reasons.push("missing_atr_stop");
+  if (!(s.trend.rv90Pct! > 0) || !Number.isFinite(s.trend.rv90Pct)) reasons.push("invalid_volatility_size");
+  return reasons;
+}
+
+export function trendSizeFrac(s: CoinStats, ctx: BeeContext): number {
+  const max = maxNotionalUsd(ctx), t = s.trend;
+  if (!t || !(t.rv90Pct! > 0) || !Number.isFinite(t.rv90Pct) || !(max > 0)) return 0;
+  return Math.max(0, Math.min(1, Math.abs(t.score) / 9,
+    ctx.bee.equityUsd * ctx.cfg.strategies.mochi.volTargetPct / t.rv90Pct! / max));
+}
+
+export const activeBreezy: BeeBrain = {
+  ...breezy,
+  strategy: "Follow the nine Donchian channels on four-hour BTC/ETH candles. Only qualified trend-direction entries are offered. WAIT without a convincing entry. HOLD_WINNER while the trend persists, CLOSE when it weakens, or SWITCH to a stronger qualified trend. ADD_TO_WINNER only above +1R within the target and risk budget. TRIM_HALF reduces exposure once after the configured score deterioration; do not buy it back. Code owns numeric thresholds, sizing, stops and the maximum holding time.",
+  openGate: undefined,
+  entryGate: ctx => ({ minConviction: ctx.cfg.cats[ctx.bee.id].minConviction, minProb: ctx.cfg.cats[ctx.bee.id].minActionProbability }),
+  neverForce: true,
+  forcedEntry: () => null,
+  rebalance: undefined,
+  timeStopMinutes: ctx => ctx.cfg.strategies.mochi.maxHoldMinutes,
+  universe: ctx => [...ctx.view.stats.values()].filter(s => trendEntryBlockers(s, ctx).length === 0).map(s => s.instId),
+  menu(ctx) {
+    const m: Menu = {}, p = ctx.bee.position;
+    const eligible = [...ctx.view.stats.values()].filter(s => trendEntryBlockers(s, ctx).length === 0);
+    const entry = (s: CoinStats, kind: "open" | "switch"): Intent => ({ kind, instId: s.instId,
+      side: s.trend!.score > 0 ? "long" : "short", sizeFrac: trendSizeFrac(s, ctx), setup: "strict" });
+    if (!p) {
+      for (const s of eligible) m[`${s.trend!.score > 0 ? "LONG" : "SHORT"}_${s.coin}`] = { desc: null, intent: entry(s, "open") };
+      if (eligible.length) m.WAIT = { desc: "no convincing entry after costs", intent: { kind: "hold" } };
+      return m;
+    }
+    m.HOLD_WINNER = { desc: "keep position", intent: { kind: "hold" } };
+    m.CLOSE = { desc: "exit a weakening trend", intent: { kind: "close", reason: "trend_exit" } };
+    const cur = ctx.view.stats.get(p.instId), inst = ctx.view.instruments.get(p.instId);
+    const fresh = cur && ctx.now - (cur.refreshedAt ?? ctx.view.ts) >= 0 && ctx.now - (cur.refreshedAt ?? ctx.view.ts) <= 3 * ctx.cfg.dataRefreshMs;
+    if (fresh && cur.trend && p.entryScore !== undefined && !p.trendTrimmed) {
+      const dir = p.side === "long" ? 1 : -1;
+      if (dir * cur.trend.score <= dir * p.entryScore - ctx.cfg.strategies.mochi.trimScoreDrop)
+        m.TRIM_HALF = { desc: "one score-deterioration trim per position", intent: { kind: "trim", fraction: 0.5 } };
+    }
+    if (!p.trendTrimmed && !m.TRIM_HALF && (ctx.uplR ?? 0) > 1 && cur && inst && eligible.includes(cur) &&
+      (p.side === "long" ? cur.trend!.score > 0 : cur.trend!.score < 0)) {
+      const max = maxNotionalUsd(ctx), gap = trendSizeFrac(cur, ctx) * max - positionNotional(p, cur.mid, inst.ctVal);
+      if (gap >= inst.minSz * inst.ctVal * cur.mid)
+        m.ADD_TO_WINNER = { desc: "add toward trend/volatility target", intent: { kind: "add", sizeFrac: Math.min(1 / 9, gap / max) } };
+    }
+    const reverse = eligible.find(s => s.instId === p.instId && (s.trend!.score > 0) !== (p.side === "long"));
+    if (reverse) m[`${reverse.trend!.score > 0 ? "LONG" : "SHORT"}_${reverse.coin}`] = { desc: null, intent: entry(reverse, "switch") };
+    const other = strongerCoin(eligible.filter(s => s.instId !== p.instId));
+    if (other && (!cur?.trend || Math.abs(other.trend!.score) > Math.abs(cur.trend.score)))
+      m.SWITCH = { desc: `switch to stronger ${other.coin} trend`, intent: entry(other, "switch") };
+    return m;
+  },
+  sizeFrac: intent => intent.sizeFrac,
+  protectiveExit(ctx) {
+    const p = ctx.bee.position, s = p ? ctx.view.stats.get(p.instId) : undefined;
+    const age = s ? ctx.now - (s.refreshedAt ?? ctx.view.ts) : Infinity;
+    if (!p || !s?.trend || age < 0 || age > 3 * ctx.cfg.dataRefreshMs) return null;
+    return (p.side === "long" ? 1 : -1) * s.trend.score <= -ctx.cfg.strategies.mochi.minTrendScore ? "trend_reversal" : null;
+  },
+};

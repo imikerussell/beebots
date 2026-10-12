@@ -26,6 +26,7 @@ async function main() {
     ),
   );
   setLogLevel(cfg.logLevel);
+  for (const message of cfg.configurationWarnings) log.warn(message);
   const unlock = lockRun(cfg.dbPath);
   process.on("exit", unlock);
   const db = new Db(cfg.dbPath),
@@ -117,12 +118,23 @@ async function main() {
     provider: cfg.decisionProvider,
     model: decisionConfiguration(cfg).model || "not configured",
     decisionsMs: cfg.tickMs,
-    protectiveMs: cfg.protectiveMs,
+    protectiveMs: cfg.tickMs,
   });
   let stopping = false;
+  // Docker's restart policy does not restart an unhealthy but still running
+  // process. Exit only for stalled loops, never for a recoverable API outage.
+  const watchdog = setInterval(() => {
+    const health = engine.health();
+    if (!health.live) {
+      log.error("engine loop stalled; exiting for supervisor restart", { health });
+      process.exit(1);
+    }
+  }, 10_000);
+  watchdog.unref();
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
+    clearInterval(watchdog);
     server.close();
     await engine.stop();
     db.close();

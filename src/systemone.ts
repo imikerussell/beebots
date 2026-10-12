@@ -4,6 +4,7 @@ import type {
   DecisionProvider,
   DecisionResult,
 } from "./decision.js";
+import { abortable } from "./abort.js";
 
 type ObjectValue = Record<string, unknown>;
 export const object = (x: unknown, name: string): ObjectValue => {
@@ -115,6 +116,7 @@ export interface SystemOneHooks {
     headers: Record<string, string>,
   ) => Promise<Record<string, unknown>>;
   beforeRequest?: () => void;
+  observeStatus?: (status: number) => void;
   observeResponse?: (raw: unknown, status: number) => number;
 }
 
@@ -130,6 +132,8 @@ export class SystemOneClient implements DecisionProvider {
     latencyMs: null as number | null,
     connected: false,
     error: null as string | null,
+    lastRequestAt: null as number | null,
+    lastSuccessAt: null as number | null,
   };
   constructor(
     private opts: SystemOneOptions,
@@ -141,6 +145,8 @@ export class SystemOneClient implements DecisionProvider {
       provider: this.opts.label,
       model: this.opts.model,
       ...this.stats,
+      activeRequests: this.active,
+      queuedRequests: this.queue.length,
     };
   }
   close() {
@@ -227,12 +233,11 @@ export class SystemOneClient implements DecisionProvider {
       };
       this.hooks.beforeRequest?.();
       this.stats.requests++;
-      const loaded = await this.hooks.preflight?.(
-        controller.signal,
-        this.fetcher,
-        headers,
-      );
-      const response = await this.fetcher(`${this.opts.origin}/v1/systemone`, {
+      this.stats.lastRequestAt = Date.now();
+      const loaded = this.hooks.preflight
+        ? await abortable(controller.signal, () => this.hooks.preflight!(controller.signal, this.fetcher, headers))
+        : undefined;
+      const response = await abortable(controller.signal, () => this.fetcher(`${this.opts.origin}/v1/systemone`, {
         method: "POST",
         signal: controller.signal,
         headers,
@@ -250,19 +255,25 @@ export class SystemOneClient implements DecisionProvider {
             conviction: {
               type: "score",
               instructions:
-                "Rate the overall strength of the market setup using this ordered rubric. This question is independent of the action choice; it is not a profit probability.",
+                "Rate the strongest eligible entry or reversal offered in the menu using this ordered rubric. Assess that specific setup, not the average across all coins. If no entry is offered, rate the held-position setup. This is an expected rubric score, not a profit probability.",
               criteria: ask.convictionLabels,
             },
           },
         }), // No temperature override: preserve the artifact's scoring calibration.
+      }));
+      this.hooks.observeStatus?.(response.status);
+      const raw: unknown = await abortable(controller.signal, () => response.json()).catch(err => {
+        if (response.ok || controller.signal.aborted) throw err;
+        return null; // Gateways can return HTML/text on failure; retain the HTTP status.
       });
-      const raw: unknown = await response.json();
       costUsd = this.hooks.observeResponse?.(raw, response.status) ?? 0;
       if (controller.signal.aborted)
         throw new Error("Inference timed out; result discarded");
       if (!response.ok || (raw && typeof raw === "object" && "error" in raw)) {
         throw new Error(
-          `${this.opts.label} HTTP ${response.status}: /v1/systemone choice/score unavailable or rejected. ${this.opts.configurationHint}. No fallback.`,
+          `${this.opts.label} HTTP ${response.status}: /v1/systemone choice/score unavailable or rejected.` +
+          (response.status === 401 || response.status === 403 ? ` ${this.opts.configurationHint}.` : "") +
+          " No fallback.",
         );
       }
       const result = validateResponse(
@@ -275,6 +286,7 @@ export class SystemOneClient implements DecisionProvider {
       result.metadata = loaded;
       result.costUsd = costUsd;
       this.stats.connected = true;
+      this.stats.lastSuccessAt = Date.now();
       this.stats.error = null;
       this.stats.latencyMs = result.latencyMs;
       return result;

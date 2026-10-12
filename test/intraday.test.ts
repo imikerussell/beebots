@@ -36,7 +36,7 @@ describe("intraday data and protective rules", () => {
       expect(h.brain.menu(h.ctx)).toEqual(original);
     }
   });
-  it("Bizzy exits at UTC close; Breezy has no replacement-engine six-hour cutoff",()=>{
+  it("both cats enforce configured maximum holding times even during outages",()=>{
     const t=riskFixture(),m=riskFixture("mochi");
     for(const h of [t,m]) {
       h.b.position=position(h.s,{stopPx:90,openedAt:NOW}); h.b.tradesToday=100;
@@ -44,6 +44,6 @@ describe("intraday data and protective rules", () => {
       h.v.tickers.get(h.s.instId)!.ts=h.ctx.now;
     }
     expect(t.run(null,false).action).toMatchObject({kind:"close",reason:"time_stop"});
-    expect(m.run(null,false).action.kind).toBe("none");
+    expect(m.run(null,false).action).toMatchObject({kind:"close",reason:"time_stop"});
   });
 });

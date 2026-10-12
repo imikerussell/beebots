@@ -18,12 +18,12 @@ const price = (value?: number | null) =>
     : `$${value.toLocaleString("en-US", { maximumFractionDigits: 5 })}`;
 const statusLabel = (entry: CoachEntry) =>
   ({
-    accepted: "Rules updated",
+    accepted: "Strategy updated",
     no_change: "Kept the strategy",
     reviewing: "Review in progress",
     failed: "Review failed",
     expired: "Review expired",
-    rolled_back: "Original rules restored",
+    rolled_back: "Baseline strategy restored",
     declined: "Historical suggestion discarded",
     pending: "Historical suggestion",
   })[entry.status];
@@ -138,7 +138,7 @@ export function TrainerPanel({
             {state?.automatic
               ? `Every ${(state.reviewIntervalMs ?? 14400000) / 3600000} h`
               : "Automatic"}{" "}
-            · {rewrites} {rewrites === 1 ? "rewrite" : "rewrites"}
+            · {rewrites} {rewrites === 1 ? "update" : "updates"}
           </p>
         </div>
         <div className="trainer-next">
@@ -245,6 +245,8 @@ export function TrainerPanel({
                 <blockquote>“{detailedReview.quip}”</blockquote>
                 <p>{detailedReview.reason}</p>
                 <p>{detailedReview.note}</p>
+                {!!detailedReview.parameterChanges?.length && <ul>{detailedReview.parameterChanges.map(change =>
+                  <li key={change.field}>{change.field}: {change.from} → {change.to}</li>)}</ul>}
                 <h4>Reviewed rules</h4>
                 <p>{detailedReview.rules}</p>
                 <p>
@@ -310,6 +312,8 @@ export function TrainerPanel({
             {"rules" in cat.current && (
               <>
                 <p>{cat.current.rules}</p>
+                {cat.current.parameters && <dl className="metrics">{Object.entries(cat.current.parameters).map(([field,value]) =>
+                  <div key={field}><dt>{field}</dt><dd>{value}</dd></div>)}</dl>}
                 <p>
                   <strong>Trading:</strong> {cat.current.coins.join(" · ")}
                 </p>

@@ -267,7 +267,11 @@ export class Engine {
     // the rules make the call. Only for a hold: a lone open or close still goes to Jev.
     const labels = Object.keys(menu);
     const required = labels.length === 1 && menu[labels[0]!]!.intent.kind === "hold";
-    if (jev.capTripped) jevStatus = "daily_cap";
+    const protective = applyRisk({ ctx, brain, proposal: null, jev: "unreachable", sizeMult: this.sizeMult(now),
+      dataAgeMs: now - this.d.feed.lastRefreshAt, maxDataAgeMs: 3 * cfg.dataRefreshMs + 30_000 });
+    // An already-triggered protective exit must not wait for a model response.
+    if (protective.action.kind === "close") jevStatus = "no_options";
+    else if (jev.capTripped) jevStatus = "daily_cap";
     else if (labels.length === 0) jevStatus = "no_options";
     else if (required) r = requiredAnswer(labels[0]!);
     else {
@@ -592,6 +596,7 @@ export class Engine {
     db.updateOrder(orderId, "filled", res.ordId, null);
     const bee = this.bees[id];
     const realised = applyFill(bee, { instId, coin: inst.coin, side, contracts: res.contracts, px: res.avgPx, feeUsd: res.feeUsd, ctVal: inst.ctVal, ts: res.ts });
+    if (purpose === "trim" && res.contracts > 0 && bee.position) bee.position.trendTrimmed = true;
     const notionalUsd = res.contracts * inst.ctVal * res.avgPx;
     db.insertFill({ orderId, bee: id, ts: res.ts, instId, side, contracts: res.contracts, px: res.avgPx, notionalUsd, feeUsd: res.feeUsd, realisedUsd: realised, slippageUsd: res.slippageUsd ?? 0 });
     bee.slippageUsd += res.slippageUsd ?? 0;

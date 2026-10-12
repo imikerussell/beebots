@@ -11,7 +11,7 @@ export interface Proposal {
   intent: Intent;
   /** Jev's probability for the chosen label. */
   prob: number;
-  /** Conviction level, rounded to 0..3. */
+  /** Expected rubric score in [0,3]; preserve fractional provider values. */
   conviction: number;
 }
 
@@ -96,6 +96,20 @@ function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCh
   const max = maxNotionalUsd(ctx) * sizeMult;
   if (!(max > 0)) return { ok: false, why: "no_equity" };
 
+  // Current strategies budget the potential stop loss, including estimated round-trip costs.
+  // The estimate is not a guaranteed loss ceiling: gaps/slippage can exceed it.
+  const riskSize = (s: NonNullable<ReturnType<typeof view.stats.get>>, side: "long" | "short", existing = 0) => {
+    const limits = ctx.cfg.cats[bee.id];
+    if (!limits) return 0;
+    const stop = intent.kind === "add" ? bee.position?.stopPx : brain.stopFor(s.instId, side, s.mid, ctx);
+    if (stop == null || !Number.isFinite(stop) || !(stop > 0)) return 0;
+    const lossFraction = Math.max(0, (side === "long" ? s.mid - stop : stop - s.mid) / s.mid);
+    if (intent.kind !== "add" && !(lossFraction > 0)) return 0;
+    const costs = 2 * ctx.cfg.risk.takerFeeRate + s.spreadBp / 10000 + 2 * ctx.cfg.paperSlippageBps / 10000;
+    const budget = bee.equityUsd * limits.stopRiskPct / 100;
+    return Math.max(0, budget - existing) / Math.max(1e-9, lossFraction + costs);
+  };
+
   if (intent.kind === "add") {
     const p = bee.position!;
     const s = view.stats.get(p.instId);
@@ -103,7 +117,9 @@ function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCh
     if (!s || !inst) return { ok: false, why: "no_market_data" };
     if (s.spreadBp > knobs.spreadGateBps) return { ok: false, why: `spread_gate ${p.coin} ${s.spreadBp.toFixed(1)}bp` };
     const room = max - positionNotional(p, s.mid, inst.ctVal);
-    const n = Math.min(intent.sizeFrac * maxNotionalUsd(ctx) * sizeMult, room);
+    const existingRisk = p.stopPx == null ? Infinity : Math.max(0, (p.side === "long" ? 1 : -1) * (p.entryPx - p.stopPx)) * p.contracts * inst.ctVal
+      + positionNotional(p, s.mid, inst.ctVal) * ctx.cfg.risk.takerFeeRate;
+    const n = Math.min(intent.sizeFrac * maxNotionalUsd(ctx) * sizeMult, room, riskSize(s, p.side, existingRisk));
     const minUsd = inst.minSz * inst.ctVal * s.mid;
     if (n < minUsd) return { ok: false, why: "size_cap" };
     return { ok: true, notionalUsd: n };
@@ -118,7 +134,7 @@ function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCh
     return { ok: false, why: `funding_veto ${s.coin} z=${s.fundingZ.toFixed(1)}` };
   }
   const frac = Math.max(0, Math.min(1, brain.sizeFrac(intent, conviction, ctx)));
-  const n = Math.min(frac * max, max);
+  const n = Math.min(frac * max, max, riskSize(s, intent.side));
   const minUsd = inst.minSz * inst.ctVal * s.mid;
   if (n < minUsd) return { ok: false, why: `below_min_size ${s.coin} $${n.toFixed(2)} < $${minUsd.toFixed(2)}` };
   return { ok: true, notionalUsd: n };
@@ -173,6 +189,8 @@ export function applyRisk(input: RiskInput): RiskResult {
     if (ts !== undefined && minutesSince(p.openedAt, now) >= ts) {
       return out({ kind: "close", reason: "time_stop" }, { forcedBy: "time_stop", vetoedBy: proposal ? "time_stop" : null, status: `time stop on ${p.coin}` });
     }
+    const exit = brain.protectiveExit?.(ctx);
+    if (exit) return out({ kind: "close", reason: exit }, { forcedBy: exit, status: exit });
   }
 
   // 3. Jev fail-closed: hold whatever we have, open nothing.
@@ -194,11 +212,12 @@ export function applyRisk(input: RiskInput): RiskResult {
 
   // 5. Opening gates.
   if (proposal && isOpening(intent)) {
+    const gate = brain.entryGate?.(ctx) ?? (brain.openGate ? { minConviction: brain.openGate.minConviction, minProb: brain.openGate.minProb(ctx) } : null);
     const dataStale = input.dataAgeMs > input.maxDataAgeMs;
     const cooldownLeft = bee.lastOrderAt === null ? 0 : knobs.cooldownMinutes - minutesSince(bee.lastOrderAt, now);
     if (cap === "trade_cap" || cap === "fee_budget") veto(cap);
     else if (dataStale) veto("stale_market_data");
-    else if (brain.openGate && intent.kind !== "add" && (proposal.prob < brain.openGate.minProb(ctx) || proposal.conviction < brain.openGate.minConviction)) {
+    else if (gate && intent.kind !== "add" && (proposal.prob < gate.minProb || proposal.conviction < gate.minConviction)) {
       veto(`weak_conviction p=${proposal.prob.toFixed(2)} c=${proposal.conviction}`);
     } else if (brain.requiresStrictSetup && (intent.kind === "open" || intent.kind === "switch") && intent.setup === "loose") veto("no_setup_yet");
     else if (cooldownLeft > 0) veto(`cooldown ${Math.ceil(cooldownLeft)}m`);

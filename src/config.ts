@@ -40,7 +40,6 @@ export interface CatLimits extends BeeKnobs {
   minVolumeUsd: number;
   minActionProbability: number;
   minConviction: number;
-  minTrendScore: number;
   longOnly: boolean;
 }
 export interface Config {
@@ -58,8 +57,8 @@ export interface Config {
   };
   coach: { enabled: boolean; apiKey?: string; adminToken?: string; model: string };
   strategies: {
-    tiger: { maxChaseRangeFrac: number; maxFundingPct: number; maxHoldMinutes: number };
-    mochi: { volTargetPct: number; trimScoreDrop: number; maxHoldMinutes: number };
+    tiger: { minMomentumPct: number; momentumAtrMult: number; maxHoldMinutes: number };
+    mochi: { minTrendScore: number; volTargetPct: number; trimScoreDrop: number; maxHoldMinutes: number };
   };
   slots: Record<BeeId, SlotProfile>;
   cats: Record<BeeId, CatLimits>;
@@ -75,8 +74,7 @@ export interface Config {
     artifact: string;
   };
   tickMs: number;
-  protectiveMs: number;
-  maxDecisionAgeMs: number;
+  configurationWarnings: string[];
   maxTickerAgeMs: number;
   dataRefreshMs: number;
   paperSlippageBps: number;
@@ -218,11 +216,10 @@ export function loadConfig(
         0,
         1,
       ),
-      minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3, true),
-      minTrendScore: num(`${p}_MIN_TREND_SCORE`, tiger ? 3 : 4, 1, 9, true),
+      minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3),
       stopAtrMult: num(`${p}_STOP_ATR_MULT`, tiger ? 1.5 : 2, 0.1, 20),
       longOnly: false,
-      maxFlatMinutes: num(`${p}_MAX_FLAT_MINUTES`, tiger ? 20 : 0, 0),
+      maxFlatMinutes: Infinity, // Legacy brain port; current strategies never force entries.
     };
     const saved = settings?.cats[i];
     if (saved && saved.id !== id)
@@ -284,11 +281,12 @@ export function loadConfig(
     },
     strategies: {
       tiger: {
-        maxChaseRangeFrac: num("TIGER_MAX_CHASE_RANGE_FRAC", 0.25, 0, 2),
-        maxFundingPct: num("TIGER_MAX_FUNDING_PCT", 0.03, 0, 1),
+        minMomentumPct: num("TIGER_MIN_MOMENTUM_PCT", 0.1, 0.01, 5),
+        momentumAtrMult: num("TIGER_MOMENTUM_ATR_MULT", 0.25, 0.01, 5),
         maxHoldMinutes: num("TIGER_MAX_HOLD_MINUTES", ACTIVE_MAX_HOLD_MINUTES, 5, 1440),
       },
       mochi: {
+        minTrendScore: num("MOCHI_MIN_TREND_SCORE", 4, 1, 9, true),
         volTargetPct: num("MOCHI_VOL_TARGET_PCT", 25, 0.1, 100),
         trimScoreDrop: num("MOCHI_TRIM_SCORE_DROP", 3, 1, 9, true),
         maxHoldMinutes: num("MOCHI_MAX_HOLD_MINUTES", 360, 15, 2880),
@@ -322,8 +320,9 @@ export function loadConfig(
       artifact: str("LM_STUDIO_ARTIFACT", "unrecorded"),
     },
     tickMs: num("DECISION_INTERVAL_MS", 10000, 1000),
-    protectiveMs: num("PROTECTIVE_INTERVAL_MS", 5000, 100),
-    maxDecisionAgeMs: num("MAX_DECISION_AGE_MS", 55000, 100),
+    configurationWarnings: ["PROTECTIVE_INTERVAL_MS", "MAX_DECISION_AGE_MS", "TIGER_MIN_TREND_SCORE",
+      "TIGER_MAX_CHASE_RANGE_FRAC", "TIGER_MAX_FUNDING_PCT", "TIGER_MAX_FLAT_MINUTES", "MOCHI_MAX_FLAT_MINUTES",
+      "BREEZY_MIN_SIZE_USD"].filter(key => env[key]?.trim()).map(key => `${key} is obsolete and ignored; remove it. See docs/CONFIGURATION.md.`),
     maxTickerAgeMs: num("MAX_TICKER_AGE_MS", 15000, 100),
     dataRefreshMs: num("DATA_REFRESH_MS", 60000, 1000),
     paperSlippageBps: num("PAPER_SLIPPAGE_BPS", 2, 0, 100),
@@ -339,7 +338,7 @@ export function loadConfig(
       takerFeeRate: num("TAKER_FEE_RATE", 0.0005, 0, 0.1),
     },
     bees: { bizzy: cats.tiger, breezy: cats.mochi, boozy: cats.tiger },
-    breezy: { minOpenProb: cats.mochi.minActionProbability, minSizeUsd: num("BREEZY_MIN_SIZE_USD", 10, 0) },
+    breezy: { minOpenProb: cats.mochi.minActionProbability, minSizeUsd: 10 }, // Historical brain fixtures only.
     bizzy: { sizeFraction: 1, universeSize: 3, timeStopMinutes: 240 },
     boozy: { candidates: 3 },
     universe: {

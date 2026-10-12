@@ -8,14 +8,15 @@ export const ACTIVE_MOMENTUM_ATR = 0.25;
 export const ACTIVE_MIN_MOMENTUM_PCT = 0.1;
 export const ACTIVE_MAX_HOLD_MINUTES = 120;
 
-export function momentumThreshold(s: CoinStats): number | null {
+export function momentumThreshold(s: CoinStats, ctx?: BeeContext): number | null {
   return s.atr14Pct !== null && Number.isFinite(s.atr14Pct) && s.atr14Pct > 0
-    ? Math.max(ACTIVE_MIN_MOMENTUM_PCT, ACTIVE_MOMENTUM_ATR * s.atr14Pct) : null;
+    ? Math.max(ctx?.cfg.strategies.tiger.minMomentumPct ?? ACTIVE_MIN_MOMENTUM_PCT,
+      (ctx?.cfg.strategies.tiger.momentumAtrMult ?? ACTIVE_MOMENTUM_ATR) * s.atr14Pct) : null;
 }
 
 /** Symmetric signals from completed 15m candles: one-hour move plus MACD direction. */
-export function momentumSide(s: CoinStats): Side | null {
-  const threshold = momentumThreshold(s), move = s.ret1hPct, macd = s.macdHistPct;
+export function momentumSide(s: CoinStats, ctx?: BeeContext): Side | null {
+  const threshold = momentumThreshold(s, ctx), move = s.ret1hPct, macd = s.macdHistPct;
   if (threshold === null || move === null || macd === null || !Number.isFinite(move) || !Number.isFinite(macd)) return null;
   if (move >= threshold && macd >= 0) return "long";
   if (move <= -threshold && macd <= 0) return "short";
@@ -30,9 +31,9 @@ export function activeEntryBlockers(s: CoinStats, ctx: BeeContext): string[] {
   if (!ctx.view.gated.includes(s.instId)) reasons.push("market_universe_gate");
   if (!(s.spreadBp <= ctx.knobs.spreadGateBps)) reasons.push("spread_gate");
   if (!(s.vol24hUsd >= ctx.cfg.cats[ctx.bee.id].minVolumeUsd)) reasons.push("liquidity_gate");
-  if (!Number.isFinite(s.mid) || s.mid <= 0 || momentumThreshold(s) === null || s.atr14Pct! * ctx.knobs.stopAtrMult >= 100) reasons.push("missing_atr_stop");
+  if (!Number.isFinite(s.mid) || s.mid <= 0 || momentumThreshold(s, ctx) === null || s.atr14Pct! * ctx.knobs.stopAtrMult >= 100) reasons.push("missing_atr_stop");
   if (s.ret1hPct === null || s.macdHistPct === null || !Number.isFinite(s.ret1hPct) || !Number.isFinite(s.macdHistPct)) reasons.push("missing_momentum_data");
-  else if (!momentumSide(s)) reasons.push("momentum_not_confirmed");
+  else if (!momentumSide(s, ctx)) reasons.push("momentum_not_confirmed");
   return reasons;
 }
 
@@ -44,10 +45,10 @@ function candidates(ctx: BeeContext): CoinStats[] {
 
 export const activeBizzy: BeeBrain = {
   id: "bizzy",
-  strategy: "You are Dark Wall-E, an active intraday long/short momentum trader. Evaluate the offered LONG and SHORT opportunities across the allowed coins. Signals use one-hour momentum and MACD from completed 15-minute candles, not a daily breakout. Prefer the clearest move with supportive volume and open interest; avoid chasing an exhausted move. Take a feasible trade with at least decent conviction rather than waiting for perfect evidence. WAIT if no offered trade is convincing. While invested, HOLD a continuing move, CLOSE a weakening or exhausted trade, or FLIP when the opposite signal is convincing. Code controls ATR stops, trailing stops, the two-hour time exit and daily limits.",
+  strategy: "You are Dark Wall-E, an active intraday long/short momentum trader. Evaluate the offered LONG and SHORT opportunities across the allowed coins. Signals use one-hour momentum and MACD from completed 15-minute candles, not a daily breakout. Prefer the clearest move with supportive volume and open interest; avoid chasing an exhausted move. Take a feasible trade when the configured conviction and probability gates are met. WAIT if no offered trade is convincing. While invested, HOLD a continuing move, CLOSE a weakening or exhausted trade, or FLIP when the opposite signal is convincing. Code controls ATR stops, trailing stops, the configured maximum holding time and daily limits.",
   convictionLabels: ["meh", "decent", "strong", "very strong"],
   neverForce: true,
-  openGate: { minConviction: 1, minProb: () => 0 },
+  entryGate: ctx => ({ minConviction: ctx.cfg.cats[ctx.bee.id].minConviction, minProb: ctx.cfg.cats[ctx.bee.id].minActionProbability }),
   timeStopMinutes: ctx => ctx.cfg.strategies.tiger.maxHoldMinutes,
   universe: ctx => candidates(ctx).map(s => s.instId),
   snapshotCoins(ctx) {
@@ -55,10 +56,10 @@ export const activeBizzy: BeeBrain = {
     if (ctx.bee.position) ids.add(ctx.bee.position.instId);
     return [...ids];
   },
-  coinSnapshot(s) {
+  coinSnapshot(s, ctx) {
     return {
       r1h_pct: r2(s.ret1hPct), macd_pct: r2(s.macdHistPct, 4),
-      min_move_pct: r2(momentumThreshold(s), 3), atr15m_pct: r2(s.atr14Pct, 3),
+      min_move_pct: r2(momentumThreshold(s, ctx), 3), atr15m_pct: r2(s.atr14Pct, 3),
       rsi14: r2(s.rsi14, 1), r24h_pct: r2(s.ret24hPct),
       fund_z: r2(s.fundingZ, 1), oi1h_pct: r2(s.oiChg1hPct, 1),
       volume_z: r2(s.volZ, 1), spread_bp: r2(s.spreadBp, 1),
@@ -68,7 +69,7 @@ export const activeBizzy: BeeBrain = {
     const menu: Menu = {}, p = ctx.bee.position;
     if (!p) {
       for (const s of candidates(ctx)) {
-        const side = momentumSide(s)!;
+        const side = momentumSide(s, ctx)!;
         menu[`${side.toUpperCase()}_${s.coin}`] = { desc: `${s.ret1hPct!.toFixed(2)}% in 1h, MACD confirms`, intent: { kind: "open", instId: s.instId, side, sizeFrac: 1, setup: "strict" } };
       }
       if (Object.keys(menu).length) menu.WAIT = { desc: "no convincing opportunity", intent: { kind: "hold" } };
@@ -77,7 +78,7 @@ export const activeBizzy: BeeBrain = {
     menu.HOLD = { desc: "momentum still supports the position", intent: { kind: "hold" } };
     menu.CLOSE = { desc: "take profit or cut a weakening trade", intent: { kind: "close", reason: "momentum_exit" } };
     const s = candidates(ctx).find(s => s.instId === p.instId);
-    const side = s ? momentumSide(s) : null;
+    const side = s ? momentumSide(s, ctx) : null;
     if (side && side !== p.side) menu[`FLIP_${side.toUpperCase()}`] = { desc: `reverse ${p.coin} to ${side}`, intent: { kind: "switch", instId: p.instId, side, sizeFrac: 1, setup: "strict" } };
     return menu;
   },
@@ -88,7 +89,7 @@ export const activeBizzy: BeeBrain = {
     const p = ctx.bee.position, s = p ? ctx.view.stats.get(p.instId) : undefined;
     if (!p || !s || (ctx.uplR ?? 0) < 1) return null;
     const age = ctx.now - (s.refreshedAt ?? ctx.view.ts);
-    if (age < 0 || age > 3 * ctx.cfg.dataRefreshMs || momentumThreshold(s) === null) return null;
+    if (age < 0 || age > 3 * ctx.cfg.dataRefreshMs || momentumThreshold(s, ctx) === null) return null;
     return atrStop(s, p.side, s.mid, ctx.knobs.stopAtrMult);
   },
   idleStatus: () => "waiting for confirmed long or short intraday momentum",

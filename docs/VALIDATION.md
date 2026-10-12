@@ -1,3 +1,11 @@
+# Current validation: configurable strategies
+
+The current contract is [CONFIGURATION.md](CONFIGURATION.md) and strategy version `catfolio-7-configurable-strategies`. Automated tests cover effective numeric gates, stop-risk sizing including execution-cost estimates, persistent one-time trims, no forced entry/buyback, maximum holding times, bounded trainer changes, evidence checks, restore/reset and deterministic replay. Historical validation below describes earlier versions and is not a statement of current scheduler, atomicity or strategy behavior.
+
+The present engine uses one serialized trading/protection tick. It has no independent five-second protection loop and does not guarantee a crash-atomic fill/stop/account transaction. No profitability backtest or live optimization result is claimed by these changes.
+
+---
+
 # Catfolio validation — 2026-10-09
 
 ## Verified locally

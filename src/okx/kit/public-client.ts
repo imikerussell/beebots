@@ -10,6 +10,7 @@
 
 import { NetworkError, OkxApiError, RateLimitError } from "./errors.js";
 import { RateLimiter, type RateLimitConfig } from "./rate-limiter.js";
+import { abortable } from "../../abort.js";
 
 export type QueryValue = string | number | boolean | string[] | number[] | undefined | null;
 export type QueryParams = Record<string, QueryValue>;
@@ -112,14 +113,21 @@ export class OkxPublicClient {
       headers.set("x-simulated-trading", "1");
     }
 
+    // Catfolio: a hard deadline includes the body, releasing shared REST slots
+    // even if a broken transport ignores cancellation.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     let response: Response;
+    let rawText: string;
     try {
-      response = await this.fetchFn(url, { method: "GET", headers, signal: AbortSignal.timeout(this.config.timeoutMs) });
+      response = await abortable(controller.signal, () => this.fetchFn(url, { method: "GET", headers, signal: controller.signal }));
+      rawText = await abortable(controller.signal, () => response.text());
     } catch (error) {
       throw new NetworkError(`Failed to call OKX endpoint GET ${requestPath}.`, `GET ${requestPath}`, error);
+    } finally {
+      clearTimeout(timer);
     }
 
-    const rawText = await response.text();
     const traceId = extractTraceId(response.headers);
     return this.processResponse<TData>(rawText, response, traceId, path, requestPath);
   }

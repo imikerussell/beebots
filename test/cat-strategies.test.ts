@@ -29,21 +29,22 @@ describe("source strategy parity through the cat adapter", () => {
   it("offers both directions and restores winner management, flips and switching", () => {
     const h = riskFixture("mochi");
     h.ctx.view = view([h.s,coin("ETH",{trend:trend({score:-7,shortOn:7})})]);
-    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["LONG_BTC","SHORT_BTC","LONG_ETH","SHORT_ETH"]);
+    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["LONG_BTC","SHORT_ETH","WAIT"]);
     h.b.position = position(h.s,{entryScore:9,contracts:10,stopPx:90});
     h.s.trend!.score = 6; h.ctx.uplR = 2;
-    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["HOLD_WINNER","ADD_TO_WINNER","TRIM_HALF","SHORT_BTC","SWITCH"]);
+    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["HOLD_WINNER","CLOSE","TRIM_HALF","SWITCH"]);
     h.ctx.uplR = 1;
     expect(h.brain.menu(h.ctx).ADD_TO_WINNER).toBeUndefined();
-    expect(h.brain.rebalance!(h.ctx)).not.toBeNull();
+    expect(h.brain.rebalance).toBeUndefined();
   });
-  it("preserves the source sizing floor and 60% volatility cap", () => {
+  it("honors the configured trend and volatility target without a forced sizing floor", () => {
     const h = riskFixture("mochi");
-    h.s.trend!.score = 1; h.s.trend!.rv90Pct = 20;
+    h.cfg.strategies.mochi.minTrendScore = 1; h.s.trend!.score = 1; h.s.trend!.rv90Pct = 20;
     const intent = h.brain.menu(h.ctx).LONG_BTC!.intent;
-    expect(intent).toMatchObject({sizeFrac:0.5});
+    expect(intent).toMatchObject({sizeFrac:1/9});
     h.s.trend!.rv90Pct = 200;
-    expect(h.brain.menu(h.ctx).LONG_BTC!.intent).toMatchObject({sizeFrac:60/200/1.94});
+    const capped = h.brain.menu(h.ctx).LONG_BTC!.intent;
+    expect(capped.kind === "open" && capped.sizeFrac).toBeCloseTo(25/200/1.94);
   });
   it("offers long and short momentum without requiring a daily breakout", () => {
     const h = riskFixture();

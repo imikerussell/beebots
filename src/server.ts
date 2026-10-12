@@ -65,12 +65,17 @@ export function startServer(
     const e = deps.engine;
     if (!e) {
       // Setup mode: healthy (so Docker leaves it alone), and nothing else to read yet.
-      if (url.pathname === "/health")
+      if (url.pathname === "/health" || url.pathname === "/live")
         return json(res, 200, { ok: true, setup: true });
       return json(res, 503, { error: "setup needed", setup: true });
     }
 
     switch (url.pathname) {
+      case "/live": {
+        const h = e.health();
+        const live = h.live ?? h.ok;
+        return json(res, live ? 200 : 503, { ...h, ok: live, ready: h.ok });
+      }
       case "/health": {
         const h = e.health();
         return json(res, h.ok ? 200 : 503, h);
