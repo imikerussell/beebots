@@ -149,6 +149,7 @@ export function rollDay(bee: BeeState, now: number): boolean {
   bee.dayKey = d;
   bee.dayStartEquityUsd = bee.equityUsd;
   bee.tradesToday = 0;
+  delete bee.entryLimitBaseline;
   bee.feesTodayUsd = 0;
   if (bee.cap !== "retired") bee.cap = null;
   return true;

@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { EquityChart } from "./EquityChart";
+import { EntryLimitReset } from "./EntryLimitReset";
 import type { Cat, CatId, Profile, Snapshot } from "./types";
 import type { Curve } from "./useFeed";
 
@@ -45,12 +46,16 @@ export function CatCard({
   meta,
   curve,
   snap,
+  connected,
+  onReset,
 }: {
   id: CatId;
   cat?: Cat;
   meta?: Profile["cats"][number];
   curve?: Curve;
   snap: Snapshot | null;
+  connected: boolean;
+  onReset: () => Promise<void>;
 }) {
   const actionDialog = useRef<HTMLDialogElement>(null);
   const identity = CAT_META[id];
@@ -193,16 +198,21 @@ export function CatCard({
         </dl>
         <div className="entry-budget">
           <div>
-            <span>Entries today</span>
-            <b>{cat ? `${cat.tradesToday} / ${cat.maxTradesPerDay}` : "—"}</b>
+            <span>Entry allowance used</span>
+            <b>{cat ? `${cat.entriesUsed ?? cat.tradesToday} / ${cat.maxTradesPerDay}` : "—"}</b>
           </div>
           <div className="meter-track">
             <div
               style={{
-                width: `${cat ? Math.min(100, (cat.tradesToday / Math.max(1, cat.maxTradesPerDay)) * 100) : 0}%`,
+                width: `${cat ? Math.min(100, ((cat.entriesUsed ?? cat.tradesToday) / Math.max(1, cat.maxTradesPerDay)) * 100) : 0}%`,
               }}
             />
           </div>
+          {cat && <>
+            <p className="entry-reset-notice">{cat.tradesToday} actual entries today · resets at 00:00 UTC</p>
+            <EntryLimitReset cat={cat} name={name} enabled={!!snap?.ownerControlsEnabled}
+              connected={connected} closed={!!snap?.closed} onReset={onReset} />
+          </>}
         </div>
         {cat?.position && (
           <p className="position-detail">

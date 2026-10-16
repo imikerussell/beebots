@@ -4,7 +4,7 @@ import type { EngineJev, EngineResult, EngineStore, EngineOverlay } from "./engi
 import { BEES, type BeeId } from "./config.js";
 import { CatCoach, coachRevision } from "./coach.js";
 import { catBrain, entryDiagnostics } from "./cats.js";
-import { positionNotional } from "./bees/common.js";
+import { entriesUsed, positionNotional } from "./bees/common.js";
 import type { BeeContext } from "./bees/types.js";
 import { RUBRIC_VERSION, STRATEGY_VERSION, type DecisionProvider, type DecisionResult, type DecisionAsk } from "./decision.js";
 import { decisionConfiguration } from "./providers.js";
@@ -188,20 +188,21 @@ export class CatfolioEngine {
   tick() { return this.stopped?Promise.resolve():this.source.tick(); }
   refreshMarket() { return this.source.refreshMarket(); }
   reconcile() { return this.source.reconcile(); }
+  resetEntryLimit(id: BeeId) { return this.source.resetEntryLimit(id); }
   private publicCat(id:BeeId) {
     const b=this.bees[id],p=b.position,view=this.d.feed.view(),inst=p?view.instruments.get(p.instId):undefined,mid=p?view.tickers.get(p.instId)?.mid:undefined,start=this.d.cfg.cats[id].startEquityUsd;
     const last=this.source.snapshot().bees.find(b=>b.bee===id)?.last;
     return {bee:id,name:this.d.cfg.slots[id].name,allocatedUsd:start,equityUsd:b.equityUsd,cashUsd:b.cashUsd,uplUsd:b.uplUsd,
       pnlUsd:b.equityUsd-start,pnlPct:100*(b.equityUsd/start-1),maxDrawdownPct:b.maxDrawdownPct,exposedMs:b.exposedMs,
       exposureUsd:p&&inst&&mid?positionNotional(p,mid,inst.ctVal):0,position:p?{...p,markPx:mid??null}:null,
-      tradesToday:b.tradesToday,maxTradesPerDay:this.d.cfg.cats[id].maxTradesPerDay,totals:b.totals,slippageUsd:b.slippageUsd,cap:b.cap,
+      tradesToday:b.tradesToday,entriesUsed:entriesUsed(b),maxTradesPerDay:this.d.cfg.cats[id].maxTradesPerDay,totals:b.totals,slippageUsd:b.slippageUsd,cap:b.cap,
       last:last?{choice:last.choice,status:last.status,vetoedBy:this.lastDecision.get(id)?.row.vetoedBy ?? null,latencyMs:last.latencyMs,ts:last.ts}:null};
   }
   snapshot() {
     const source=this.source.snapshot();
     return {...source,mode:this.d.cfg.mode==="dry"?"PAPER":this.d.cfg.mode.toUpperCase(),cats:BEES.map(id=>this.publicCat(id)),
       configurationWarnings:this.d.cfg.configurationWarnings,totalStartEquityUsd:this.d.cfg.totalStartEquityUsd,decisionIntervalMs:this.d.cfg.tickMs,protectiveIntervalMs:this.d.cfg.tickMs,
-      inference:this.d.provider.status(),coach:this.coach.state()};
+      inference:this.d.provider.status(),coach:this.coach.state(),ownerControlsEnabled:!!this.d.cfg.coach.adminToken};
   }
   health() {
     const ready = this.source.health(), progress = this.source.loopHealth(this.stopped);

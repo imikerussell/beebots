@@ -29,7 +29,8 @@ describe("entry diagnostics", () => {
     expect(d.blockers).toEqual(["momentum_not_confirmed"]);
     expect(entryExplanations(d).join(" ")).toContain("needs magnitude >= 0.125%");
     expect(d.breakoutTrigger).toBeNull();
-    expect(d).not.toHaveProperty("minStopDistancePct");
+    expect(d.minStopDistancePct).toBeCloseTo(0.45);
+    expect(d.entryMinutes).toBe(15);
   });
   it("does not reinterpret historical stale decisions as current failed market conditions", () => {
     const legacy = {coin:"BTC",blockers:["stale_indicators","move_too_small_after_costs","minTrendScore"]};

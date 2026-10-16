@@ -13,6 +13,7 @@ export interface Cat {
   exposedMs: number;
   slippageUsd: number;
   tradesToday: number;
+  entriesUsed?: number;
   maxTradesPerDay: number;
   totals: {
     feesUsd: number;
@@ -38,6 +39,7 @@ export interface Cat {
   } | null;
 }
 export interface Snapshot {
+  ownerControlsEnabled?: boolean;
   ts: number;
   mode: "PAPER" | "DEMO" | "LIVE";
   cats: Cat[];
@@ -118,6 +120,12 @@ export interface EntryDiagnostic {
   stopDistancePct?: number | null;
   roundTripCostPct?: number | null;
   minStopDistancePct?: number | null;
+  minStopCostRatio?: number;
+  signalMode?: string;
+  regime?: "long" | "short" | null;
+  entryHigh?: number | null;
+  entryLow?: number | null;
+  maxEntryChaseAtr?: number;
   spreadBps?: number | null;
   maxSpreadBps?: number | null;
   volumeUsd?: number | null;
@@ -130,7 +138,9 @@ export interface EntryDiagnostic {
   maxFundingPct?: number | null;
   shortSlices?: number | null;
   trendSlices?: number | null;
+  trendStopPx?: number | null;
   tradesToday?: number;
+  entriesUsed?: number;
   maxTradesPerDay?: number;
 }
 
@@ -143,7 +153,7 @@ export interface CoachContext {
 }
 export interface CoachEntry {
   id: number; cat: CatId; day: string; createdAt: number; expiresAt: number;
-  status: "reviewing" | "pending" | "accepted" | "declined" | "no_change" | "failed" | "expired" | "rolled_back";
+  status: "reviewing" | "pending" | "advisory" | "accepted" | "declined" | "no_change" | "failed" | "expired" | "rolled_back";
   model: string;
   completedAt: number | null; resolvedAt: number | null; error: string | null;
   review: { diagnosis: string; rationale: string; tradeoff: string;
@@ -152,7 +162,7 @@ export interface CoachEntry {
     blockers: Array<{ reason: string; decisions: number }> };
 }
 export interface CoachState {
-  automatic?: boolean; reviewIntervalMs?: number;
+  automatic?: boolean; autoApply?: boolean; reviewIntervalMs?: number; evidenceWindowMs?: number;
   enabled: boolean; canReview: boolean; model: string; message: string; approvalMessage: string | null;
   checkedAt: number | null; checkIntervalMs: number;
   cats: Array<{ cat: CatId; context?: CoachContext; current: CoachRules | Record<CoachField, number>; baseline: CoachRules | Record<CoachField, number>; activeReviewId: number | null; nextReviewAt: number | null;

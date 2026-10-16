@@ -1,5 +1,5 @@
 import type { Menu } from "./bees/types.js";
-export const STRATEGY_VERSION = "catfolio-7-configurable-strategies";
+export const STRATEGY_VERSION = "catfolio-8-bar-driven-strategies";
 export const RUBRIC_VERSION = "selected-setup-conviction-2";
 export const CONVICTION = [
   "0: No confirmed setup; insufficient or conflicting evidence",

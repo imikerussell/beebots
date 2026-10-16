@@ -39,6 +39,8 @@ export function coin(
     ask: px * 1.00005,
     spreadBp: 1,
     vol24hUsd: 20e6,
+    confirmed15m: {close:px,ts:NOW-15*60000},
+    confirmed4h: {close:px,ts:NOW-4*3600000},
     rsi14: 50,
     pctB: 0.5,
     bbWidthPct: 2,

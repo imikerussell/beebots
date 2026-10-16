@@ -1,6 +1,6 @@
 # Effective configuration and trainer controls
 
-Applies to `catfolio-7-configurable-strategies`. `.env.example` lists supported settings. Arcane's saved environment is the deployment source; editing a local `.env` does not update Arcane. Restart the engine after editing its environment, preserving the database volume and starting allocation. `DRY_RUN=true` / `MODE=paper` keeps execution simulated. The supplied Compose files enforce paper mode.
+Applies to `catfolio-8-bar-driven-strategies`. `.env.example` lists supported settings. Arcane's saved environment is the deployment source; editing a local `.env` does not update Arcane. Restart the engine after editing its environment, preserving the database volume and starting allocation. `DRY_RUN=true` / `MODE=paper` keeps execution simulated. The supplied Compose files enforce paper mode. See the [strategy audit](STRATEGY_REVIEW_2026-10-16.md) and [retrospective comparison](STRATEGY_BACKTEST_2026-10-16.md); no profitable portfolio has been established.
 
 ## Owner limits and actual sizing
 
@@ -17,7 +17,7 @@ Capital allocation, leverage, stop-risk budgets, loss limits, trade/fee limits, 
 | Environment setting | Effect | Trainer range / maximum change per review |
 |---|---|---|
 | `TIGER_MIN_CONVICTION`, `MOCHI_MIN_CONVICTION` | Minimum continuous expected rubric score, 0–3; never rounded | 0.25–3 / 0.25 |
-| `TIGER_MIN_ACTION_PROBABILITY`, `MOCHI_MIN_ACTION_PROBABILITY` | Minimum probability assigned to the selected entry or reversal | 0.10–0.95 / 0.05 |
+| `TIGER_MIN_ACTION_PROBABILITY`, `MOCHI_MIN_ACTION_PROBABILITY` | Minimum probability assigned to the selected entry; this is not a win probability | 0.10–0.95 / 0.05 |
 | `TIGER_MIN_MOMENTUM_PCT` | Minimum absolute one-hour return in percent | 0.05–1 / 0.05 |
 | `TIGER_MOMENTUM_ATR_MULT` | ATR-relative momentum threshold; actual minimum is max(this × 15-minute ATR%, minimum momentum%) | 0.1–2 / 0.1 |
 | `MOCHI_MIN_TREND_SCORE` | Minimum absolute nine-channel Donchian score; only matching-direction entries are offered | 1–9 / 1, integers |
@@ -25,22 +25,40 @@ Capital allocation, leverage, stop-risk budgets, loss limits, trade/fee limits, 
 | `MOCHI_TRIM_SCORE_DROP` | Directional score decline from entry that offers one half-trim | 1–6 / 1, integers |
 | `TIGER_STOP_ATR_MULT`, `MOCHI_STOP_ATR_MULT` | Initial stop distance; Dark uses 15-minute ATR, Good four-hour ATR | Owner only |
 | `TIGER_MAX_HOLD_MINUTES`, `MOCHI_MAX_HOLD_MINUTES` | Deterministic maximum holding time, including outages and capped accounts | Owner only |
+| `TIGER_SIGNAL_MODE` | `momentum` (default), `trend_momentum` or `trend_breakout`; alternatives remain experimental | Owner only |
+| `TIGER_TREND_FAST_HOURS`, `TIGER_TREND_SLOW_HOURS` | Hourly EMA regime, defaults 20/50; used by the two trend modes | Owner only |
+| `TIGER_BREAKOUT_BARS`, `TIGER_EXIT_BARS` | Prior completed 15-minute entry/exit channels, defaults 20/10; breakout mode only | Owner only |
+| `TIGER_MIN_STOP_COST_RATIO`, `MOCHI_MIN_STOP_COST_RATIO` | Minimum ATR stop distance divided by estimated round-trip costs; default 3 | Owner only |
+| `TIGER_MAX_ENTRY_CHASE_ATR`, `MOCHI_MAX_ENTRY_CHASE_ATR` | Maximum adverse move from the completed close before entry, in ATR units; default 0.5 | Owner only |
+| `TIGER_MAX_ENTRY_CANDIDATES`, `MOCHI_MAX_ENTRY_CANDIDATES` | Ranked candidates offered alongside WAIT; default 1, maxima 12/2 | Owner only |
 
 The owner may configure values within the broader validation ranges in `src/config.ts`. Trainer bounds are deliberately narrower. Defaults remain experimental baselines, not optimized or profitability-validated settings.
 
-Both strategies can WAIT and neither forces an entry. Good checks fresh indicators, complete channels, volatility, volume and spread; it closes on a qualified opposite trend. It can trim once per position, remembers that trim across restart, and never automatically buys the trimmed exposure back. Adds require a winner above +1R, a valid current trend, available target size and stop-risk room.
+Both strategies can WAIT and neither forces an entry. The signal modes, channel horizons and execution filters are owner controls so a trainer cannot silently change the hypothesis being tested. The two momentum parameters are omitted from trainer controls in breakout mode, where they have no effect. Cost feasibility is not an estimate of future profit; funding is separate from this execution-cost estimate.
+
+Dark gets at most one strategy decision per completed 15-minute bar; Good gets one per completed four-hour bar. The consumed bar persists before inference, including provider errors and vetoes, so a restart or ten-second tick cannot resample the same opportunity. Markets missing the current completed candle are omitted for that bar. Owner/configuration changes create a new decision revision. Protection, mark-to-market and loss/time stops keep running on `DECISION_INTERVAL_MS`; this setting does not control signal frequency. Waiting protection pulses do not count as trainer observations.
+
+While a signal persists, the model cannot arbitrarily close or immediately flip a position. Dark exits when both return and MACD turn against it, or the configured breakout exit fails. Good exits when its signed trend score reaches zero or turns against it. Good also rejects entries whose live price has already crossed the channel stop. It can trim once per position, remembers that trim across restart, and never automatically buys the trimmed exposure back. Adds require a winner above +1R, a valid current trend, available target size and stop-risk room. Existing maximum holds remain 120/360 minutes by default; longer experimental holds are never enabled automatically.
+
+## Reset an exhausted entry allowance
+
+Each cat's dashboard card offers **Reset entry limit** when its entry allowance is exhausted. Enter the owner key configured as `COACH_ADMIN_TOKEN`. The reset grants another batch of up to that cat's `MAX_ENTRIES_PER_DAY`, expiring at 00:00 UTC. No new environment setting is needed and the trainer does not need to be enabled.
+
+The dashboard shows allowance usage separately from actual entries today. Resets preserve real entry counts, positions, fills, P&L, fees, cooldowns and strategy settings; they do not place an order. Fee budgets, loss stops and retirement cannot be reset with this control. A zero entry limit stays disabled. Each reset is persisted with an audit record and survives restart. Double submissions are rejected once the allowance is renewed. If a trading tick is in progress, retry once it finishes.
+
+The authenticated endpoint is `POST /controls/reset-entry-limit` with JSON `{"cat":"tiger"}` or `{"cat":"mochi"}` and the header `Authorization: Bearer <owner key>`. The browser keeps the key only in the open form and clears it on success or close.
 
 ## Trainer lifecycle
 
-The trainer may change rules, allowed coins and **at most one numeric strategy parameter every four hours per cat**. It receives the exact current values and bounds. Numeric changes require a flat position, a matching `from` value and a permitted step. Risk/credential fields and cross-cat parameter names are rejected by schema or validation.
+`COACH_ENABLED=true` enables scheduled reviews. **`COACH_AUTO_APPLY=false` is the new default:** reviews are recorded as **Suggestion only** and do not change rules, coins or parameters. There is no pending-approval flow. Starting in advisory mode restores the environment baseline and retires any previously saved automatic overlay, preserving review history. `COACH_AUTO_APPLY=true` explicitly permits experimental rule/coin changes and **at most one numeric strategy parameter per review**, no more often than every four hours per cat. Numeric changes require a flat position, a matching `from` value and a permitted step. Risk/credential fields and cross-cat parameter names are rejected by schema or validation.
 
-Relaxing an entry threshold requires at least 30 relevant recorded vetoes/blockers and current fresh signals with no unrelated blockers. Other numeric changes require at least five fully completed trades under the current strategy. Thousands of repeated HOLD decisions do not count as completed trades. These checks establish minimum evidence, not a statistical guarantee of improvement.
+Every numeric change requires at least five fully completed trades under the current strategy. Relaxing an entry threshold additionally requires positive completed-trade net P&L after fees, at least 30 relevant veto/blocker episodes and a current fresh signal with no unrelated blockers. Funding and inference costs are not allocated to individual trades, so positive after-fee P&L does not establish all-cost profitability. These are minimum evidence checks, not statistical proof.
 
-Evidence covers at most 24 hours and starts again after the latest accepted change or reset. Completed-trade P&L includes actual simulated fills and fees; slippage is already in fills. Funding and inference costs remain separate in the account/report. The prompt prioritizes net results and drawdown over activity, asks the trainer to assess subsequent outcomes and reverse unsuccessful experiments, and permits no change. There is no guaranteed optimizer or automatic statistical rollback system.
+Readiness and evidence cover at most seven days and start again after the latest accepted change or reset. Reviews require 30 distinct completed signal-bar observations, excluding idle protection pulses; this takes roughly 7.5 hours for Dark and five days for Good when observations are available. Repeated records from one bar count once. Completed-trade P&L includes actual fills and all opening/add/trim/closing fees; slippage is already in fills. Funding and inference costs remain separate in the report. The prompt prioritizes net results and drawdown over activity and permits no change. There is no guaranteed optimizer or automatic statistical rollback system.
 
 Applied values persist in the database. The dashboard shows the effective parameters, each numeric `from → to` change, and review history. Owner reset restores baseline rules, coins and all numeric values. An explicit environment baseline change supersedes an older saved overlay at restart. In-flight model answers become invalid when trainer settings change.
 
-Version 7 retires both bots' old trainer overlays while keeping review history, balances, positions and fills. Old strategies' observations do not justify new parameter changes. Existing positions immediately become subject to the configured holding limits, so an older Good position may close on the first tick after upgrade. Protection remains inside the serialized trading tick; an already-triggered exit skips its model request, but another outstanding request can still delay subsequent ticks.
+Version 8 retires both bots' old trainer overlays while keeping review history, balances, positions and fills. Old strategies' observations do not justify new parameter changes. Existing positions immediately become subject to the configured holding limits and new deterministic signal exits. An older position may close on the first tick after upgrade. Protection remains inside the serialized trading tick; an already-triggered exit skips its model request, but another outstanding request can still delay subsequent ticks.
 
 ## Remove obsolete settings
 

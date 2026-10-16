@@ -26,13 +26,15 @@ describe("source strategy parity through the cat adapter", () => {
       expect(h.brain.timeStopMinutes?.(h.ctx)).toEqual(base.timeStopMinutes?.(h.ctx));
     }
   });
-  it("offers both directions and restores winner management, flips and switching", () => {
+  it("ranks a single directional candidate and retains a continuing winner without switching", () => {
     const h = riskFixture("mochi");
     h.ctx.view = view([h.s,coin("ETH",{trend:trend({score:-7,shortOn:7})})]);
+    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["LONG_BTC","WAIT"]);
+    h.cfg.cats.mochi.maxEntryCandidates=2;
     expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["LONG_BTC","SHORT_ETH","WAIT"]);
     h.b.position = position(h.s,{entryScore:9,contracts:10,stopPx:90});
     h.s.trend!.score = 6; h.ctx.uplR = 2;
-    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["HOLD_WINNER","CLOSE","TRIM_HALF","SWITCH"]);
+    expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["HOLD_WINNER","TRIM_HALF"]);
     h.ctx.uplR = 1;
     expect(h.brain.menu(h.ctx).ADD_TO_WINNER).toBeUndefined();
     expect(h.brain.rebalance).toBeUndefined();
@@ -81,14 +83,17 @@ describe("source strategy parity through the cat adapter", () => {
       expect(h.brain.menu(h.ctx), JSON.stringify(patch)).toEqual({});
     }
   });
-  it("lets a held position close in profit or loss and reverse on a qualifying opposite signal", () => {
+  it("holds profit or loss while the signal persists and exits deterministically on invalidation", () => {
     const h = riskFixture(); h.b.position = position(h.s,{stopPx:90});
     for (const profit of [-1,1]) {
       h.b.uplUsd = profit;
-      expect(h.brain.menu(h.ctx).CLOSE?.intent).toMatchObject({kind:"close"});
+      expect(Object.keys(h.brain.menu(h.ctx))).toEqual(["HOLD"]);
+      expect(h.brain.protectiveExit!(h.ctx)).toBeNull();
     }
     h.s.ret1hPct = -1; h.s.macdHistPct = -0.2;
-    expect(h.brain.menu(h.ctx).FLIP_SHORT?.intent).toMatchObject({kind:"switch",side:"short"});
+    expect(h.brain.menu(h.ctx).CLOSE?.intent).toMatchObject({kind:"close",reason:"momentum_reversal"});
+    expect(h.brain.menu(h.ctx).FLIP_SHORT).toBeUndefined();
+    expect(h.brain.protectiveExit!(h.ctx)).toBe("momentum_reversal");
     h.cfg.slots.tiger.coins = ["ETH"];
     const restricted = catBrain("tiger",h.cfg);
     expect(restricted.menu(h.ctx).CLOSE).toBeDefined();
@@ -108,7 +113,10 @@ describe("source strategy parity through the cat adapter", () => {
     const brain = catBrain("mochi",h.cfg), menu = brain.menu(h.ctx);
     expect(menu.SHORT_BTC).toBeUndefined();
     expect(menu.TRIM_HALF).toBeDefined();
-    expect(menu.SWITCH).toBeDefined();
+    expect(menu.SWITCH).toBeUndefined();
+    h.s.trend!.score=0;
+    expect(brain.menu(h.ctx).CLOSE).toBeDefined();
+    expect(brain.protectiveExit!(h.ctx)).toBe("trend_reversal");
   });
   it("replays all nine upstream horizons in rising, falling and flat markets", () => {
     const rise=Array.from({length:450},(_,i)=>100+i);

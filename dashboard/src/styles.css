@@ -1516,6 +1516,14 @@ dialog details {
 .dashboard-dialog > header button { font-size: 22px; padding: 3px 10px; }
 .dashboard-dialog .model-stats { margin: 20px 0; }
 .dashboard-dialog::backdrop { background: #0009; backdrop-filter: blur(3px); }
+.entry-reset-button { margin-top: 8px; }
+.entry-reset-notice { margin-top: 6px; color: var(--muted); font-size: 11px; }
+.entry-reset-dialog { max-width: 500px; }
+.entry-reset-dialog p { margin-bottom: 12px; }
+.entry-reset-dialog label { display: block; margin: 18px 0 6px; }
+.entry-reset-dialog input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: inherit; font: inherit; }
+.entry-reset-dialog input:focus-visible { outline: 2px solid var(--mochi); outline-offset: 2px; }
+.entry-reset-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .stream-preview .stream-list { min-height: 0; max-height: none; overflow: visible; padding: 0; }
 .stream-preview .stream-empty { min-height: 0; padding: 16px 0; }
 .stream-preview-row { padding: 0; }

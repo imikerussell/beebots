@@ -40,6 +40,9 @@ export interface CatLimits extends BeeKnobs {
   minVolumeUsd: number;
   minActionProbability: number;
   minConviction: number;
+  minStopCostRatio: number;
+  maxEntryCandidates: number;
+  maxEntryChaseAtr: number;
   longOnly: boolean;
 }
 export interface Config {
@@ -55,9 +58,11 @@ export interface Config {
     dailyUsdCap: number;
     usdPerMTok: number;
   };
-  coach: { enabled: boolean; apiKey?: string; adminToken?: string; model: string };
+  coach: { enabled: boolean; autoApply: boolean; apiKey?: string; adminToken?: string; model: string };
   strategies: {
-    tiger: { minMomentumPct: number; momentumAtrMult: number; maxHoldMinutes: number };
+    tiger: { minMomentumPct: number; momentumAtrMult: number; maxHoldMinutes: number;
+      signalMode: "momentum" | "trend_momentum" | "trend_breakout";
+      entryBars: number; exitBars: number; fastHours: number; slowHours: number };
     mochi: { minTrendScore: number; volTargetPct: number; trimScoreDrop: number; maxHoldMinutes: number };
   };
   slots: Record<BeeId, SlotProfile>;
@@ -217,6 +222,9 @@ export function loadConfig(
         1,
       ),
       minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3),
+      minStopCostRatio: num(`${p}_MIN_STOP_COST_RATIO`, 3, 0, 20),
+      maxEntryCandidates: num(`${p}_MAX_ENTRY_CANDIDATES`, 1, 1, tiger ? 12 : 2, true),
+      maxEntryChaseAtr: num(`${p}_MAX_ENTRY_CHASE_ATR`, 0.5, 0, 10),
       stopAtrMult: num(`${p}_STOP_ATR_MULT`, tiger ? 1.5 : 2, 0.1, 20),
       longOnly: false,
       maxFlatMinutes: Infinity, // Legacy brain port; current strategies never force entries.
@@ -233,8 +241,8 @@ export function loadConfig(
       rules:
         migrateStrategyRules(saved?.rules) ??
         (tiger
-          ? "Take convincing LONG or SHORT momentum entries without waiting for a daily breakout. HOLD a continuing move, CLOSE when it weakens, and FLIP when the opposite signal is convincing. WAIT when no offered trade is convincing."
-          : "Follow the stronger directional trend. Ride winners and add above +1R. Trim weakening trends or switch when the other direction or coin is stronger."),
+          ? "Assess the qualified LONG or SHORT candidate against WAIT on each completed signal bar. HOLD a continuing move. Code handles signal exits and protective stops; prefer persistence after costs."
+          : "Assess the qualified directional trend against WAIT on each completed four-hour bar. Ride winners and add only within the risk budget above +1R. Trim a weakening trend once; code handles exits."),
       coins: tiger ? [...BIZZY_BREAKOUT_COINS] : ["BTC", "ETH"],
       customImage: false,
       fromSetup: !!saved,
@@ -270,11 +278,18 @@ export function loadConfig(
     throw new ConfigError("Invalid LOG_LEVEL");
   const coachEnabled = str("COACH_ENABLED", env.AI_GATEWAY_API_KEY?.trim() ? "true" : "false");
   if (!["true", "false"].includes(coachEnabled)) throw new ConfigError("COACH_ENABLED must be true or false");
+  const coachAutoApply = str("COACH_AUTO_APPLY", "false");
+  if (!["true", "false"].includes(coachAutoApply)) throw new ConfigError("COACH_AUTO_APPLY must be true or false");
+  const signalMode = str("TIGER_SIGNAL_MODE", "momentum");
+  if (!["momentum", "trend_momentum", "trend_breakout"].includes(signalMode)) throw new ConfigError("Invalid TIGER_SIGNAL_MODE");
+  const fastHours = num("TIGER_TREND_FAST_HOURS",20,2,99,true), slowHours = num("TIGER_TREND_SLOW_HOURS",50,3,100,true);
+  if (fastHours >= slowHours) throw new ConfigError("TIGER_TREND_FAST_HOURS must be below TIGER_TREND_SLOW_HOURS");
   const adminToken = env.COACH_ADMIN_TOKEN?.trim() || undefined;
   if (adminToken && adminToken.length < 24) throw new ConfigError("COACH_ADMIN_TOKEN must be at least 24 characters");
   return {
     coach: {
       enabled: coachEnabled === "true",
+      autoApply: coachAutoApply === "true",
       apiKey: env.AI_GATEWAY_API_KEY?.trim() || undefined,
       adminToken,
       model: str("COACH_MODEL", "anthropic/claude-sonnet-4.6"),
@@ -284,12 +299,15 @@ export function loadConfig(
         minMomentumPct: num("TIGER_MIN_MOMENTUM_PCT", 0.1, 0.01, 5),
         momentumAtrMult: num("TIGER_MOMENTUM_ATR_MULT", 0.25, 0.01, 5),
         maxHoldMinutes: num("TIGER_MAX_HOLD_MINUTES", ACTIVE_MAX_HOLD_MINUTES, 5, 1440),
+        signalMode: signalMode as "momentum" | "trend_momentum" | "trend_breakout",
+        entryBars: num("TIGER_BREAKOUT_BARS",20,2,100,true),
+        exitBars: num("TIGER_EXIT_BARS",10,2,100,true), fastHours, slowHours,
       },
       mochi: {
         minTrendScore: num("MOCHI_MIN_TREND_SCORE", 4, 1, 9, true),
         volTargetPct: num("MOCHI_VOL_TARGET_PCT", 25, 0.1, 100),
         trimScoreDrop: num("MOCHI_TRIM_SCORE_DROP", 3, 1, 9, true),
-        maxHoldMinutes: num("MOCHI_MAX_HOLD_MINUTES", 360, 15, 2880),
+        maxHoldMinutes: num("MOCHI_MAX_HOLD_MINUTES", 360, 15, 10080),
       },
     },
     mode,

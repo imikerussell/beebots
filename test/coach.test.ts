@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BIZZY_BREAKOUT_COINS } from "../src/bees/bizzy.js";
-import { CatCoach, CoachAnswer, COACH_INTERVAL_MS, coachValues } from "../src/coach.js";
+import { CatCoach, CoachAnswer, COACH_EVIDENCE_WINDOW_MS, COACH_INTERVAL_MS, coachValues } from "../src/coach.js";
 import { loadConfig, type BeeId } from "../src/config.js";
 import { Db } from "../src/db.js";
 import { catBrain } from "../src/cats.js";
@@ -22,17 +22,19 @@ const answer = {
   note: "Your cat has more patience than evidence so far. Test this idea without mistaking a short sample for an edge.",
 };
 function observations(db: Db, cat: BeeId, now: number, count = 31) {
+  const barMs = (cat === "tiger" ? 15 : 240) * 60_000;
   for (let i = 0; i < count; i++) db.insertDecision({
-    bee: cat, ts: now - 3600000 + i * 60000, stateHash: null, stateJson: null,
+    bee: cat, ts: now - count * barMs + i * barMs, stateHash: null, stateJson: null,
     menuJson: JSON.stringify({ WAIT: {} }), choice: "WAIT", probabilities: { WAIT: 1 }, confidence: 1, conviction: 0,
     latencyMs: 5, inputTokens: 10, jevCostUsd: 0, jevError: null, action: { kind: "none" }, vetoedBy: null, forcedBy: null, status: "WAIT",
     auditJson: JSON.stringify({ source: "model_request", strategyVersion: STRATEGY_VERSION, entryDiagnostics: [{ coin: "BTC", blockers: ["minTrendScore"] }] }),
   });
 }
 const envelope = (a: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(a) }, finish_reason: "stop" }] }));
-function harness(options: { answer?: unknown; seed?: boolean; enabled?: boolean; hasPosition?: () => boolean; startAt?: number } = {}) {
+function harness(options: { answer?: unknown; seed?: boolean; enabled?: boolean; autoApply?: boolean; hasPosition?: () => boolean; startAt?: number } = {}) {
   let now = options.startAt ?? NOW;
-  const config = () => loadConfig({ AI_GATEWAY_API_KEY: "private-gateway-key", COACH_ADMIN_TOKEN: "owner-secret-12345678901234567890", COACH_ENABLED: options.enabled === false ? "false" : "true" });
+  // Existing automatic-path fixtures opt in explicitly; production defaults to advisory.
+  const config = () => loadConfig({ AI_GATEWAY_API_KEY: "private-gateway-key", COACH_ADMIN_TOKEN: "owner-secret-12345678901234567890", COACH_ENABLED: options.enabled === false ? "false" : "true", COACH_AUTO_APPLY: options.autoApply === false ? "false" : "true" });
   const cfg = config(), db = new Db(":memory:"); cleanups.push(() => db.close());
   const fetcher = vi.fn(async (_url: unknown, init: RequestInit) => {
     const data = JSON.parse(JSON.parse(String(init.body)).messages[1].content);
@@ -88,20 +90,22 @@ describe("rules and coins trainer", () => {
     await h.coach.tick();
     expect(h.cfg.slots.tiger.coins).toEqual([...BIZZY_BREAKOUT_COINS]);
   });
-  it("uses a rolling 4-hour cooldown, permits two attempts on one UTC date, and survives restart", async () => {
+  it("uses a rolling 4-hour minimum cooldown and requires fresh bar evidence after a change across restart", async () => {
     const h = harness({ startAt: Date.UTC(2026, 8, 24, 1) });
     await Promise.all([h.coach.tick(), h.coach.tick()]);
     h.advance(COACH_INTERVAL_MS - 1); observations(h.db, "tiger", h.now());
     await new CatCoach({ ...h.deps, cfg: h.config() }).tick(); expect(h.fetcher).toHaveBeenCalledTimes(1);
-    h.advance(1); await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(2);
+    h.advance(1); await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(1);
+    h.advance(COACH_INTERVAL_MS); observations(h.db,"tiger",h.now());
+    await h.coach.tick(); expect(h.fetcher).toHaveBeenCalledTimes(2);
     expect(h.coach.state().entries.map(e => e.day)).toEqual(["2026-09-24", "2026-09-24"]);
   });
-  it("waits four hours after applying changes and records an unchanged review without rewriting", async () => {
+  it("waits for fresh evidence after applying changes and records an unchanged review without rewriting", async () => {
     const h = harness(); await h.coach.tick();
     expect(h.coach.state().cats[0]?.nextReviewAt).toBe(h.now() + COACH_INTERVAL_MS);
     h.advance(COACH_INTERVAL_MS - 1); observations(h.db, "tiger", h.now()); await h.coach.tick();
     expect(h.fetcher).toHaveBeenCalledTimes(1);
-    h.advance(1); await h.coach.tick();
+    h.advance(COACH_INTERVAL_MS + 1); observations(h.db,"tiger",h.now()); await h.coach.tick();
     expect(h.coach.state().entries[0]?.status).toBe("no_change");
     expect(h.changed).toHaveBeenCalledTimes(1);
     expect(h.coach.state().cats[0]?.acceptedCount).toBe(1);
@@ -172,17 +176,63 @@ describe("rules and coins trainer", () => {
   it("requires observations, reports progress and supports separate reviews for both cats", async () => {
     const h = harness({ seed: false }); await h.coach.tick(); expect(h.fetcher).not.toHaveBeenCalled();
     observations(h.db, "tiger", h.now(), 10);
-    expect(h.coach.state().cats[0]).toMatchObject({ phase: "gathering", observations: 10, observedMinutes: 60 });
-    observations(h.db, "tiger", h.now(), 20); observations(h.db, "mochi", h.now());
+    expect(h.coach.state().cats[0]).toMatchObject({ phase: "gathering", observations: 10, observedMinutes: 150 });
+    observations(h.db, "tiger", h.now(), 30); observations(h.db, "mochi", h.now());
     await h.coach.tick(); expect(h.coach.state().entries.map(e => e.status)).toEqual(["accepted", "accepted"]);
     expect(h.coach.state().cats[0]?.phase).toBe("scheduled");
   });
   it("requires an hour even if decisions are frequent and respects disabled coaching", async () => {
     const h = harness(); h.db.raw.prepare("UPDATE decisions SET ts=?").run(h.now() - 20 * 60000);
     await h.coach.tick(); expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.coach.state().cats[0]?.observations).toBe(1);
     expect(h.coach.state().cats[0]?.nextReviewAt).toBe(h.now() + 40 * 60000);
     const off = harness({ enabled: false }); await off.coach.tick(); expect(off.fetcher).not.toHaveBeenCalled();
     expect(off.coach.state().cats[0]?.phase).toBe("paused");
+  });
+  it("can review Good after 30 distinct four-hour observations within seven days", async () => {
+    const h = harness({seed:false,autoApply:false});
+    observations(h.db,"mochi",h.now(),29);
+    await h.coach.tick();
+    expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.coach.state().cats[1]).toMatchObject({phase:"gathering",observations:29});
+    // The overlapping 29 observations remain one episode each; the earlier thirtieth completes the sample.
+    observations(h.db,"mochi",h.now(),30);
+    await h.coach.tick();
+    expect(h.coach.state()).toMatchObject({evidenceWindowMs:7*24*3600000});
+    expect(h.coach.state().entries[0]).toMatchObject({cat:"mochi",status:"advisory",evidence:{summary:{decisions:30}}});
+    expect(h.coach.state().cats[1]?.observedMinutes).toBe(30*240);
+  });
+  it("excludes old samples and protection pulses without counting duplicate bar decisions twice", async () => {
+    const h = harness({seed:false,autoApply:false});
+    observations(h.db,"tiger",h.now()-COACH_EVIDENCE_WINDOW_MS-1);
+    observations(h.db,"tiger",h.now(),29);
+    observations(h.db,"tiger",h.now(),29);
+    const latest = h.db.raw.prepare("SELECT MAX(id) AS id FROM decisions").get() as {id:number};
+    observations(h.db,"tiger",h.now(),31);
+    h.db.raw.prepare("UPDATE decisions SET audit_json=json_set(audit_json,'$.source','protection') WHERE id>?").run(latest.id);
+    await h.coach.tick();
+    expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.coach.state().cats[0]?.observations).toBe(29);
+  });
+  it("requires 30 new Good signal bars after an applied change and again after reset", async () => {
+    const h = harness({seed:false}); observations(h.db,"mochi",h.now(),30);
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    expect(h.coach.state().cats[1]?.observations).toBe(0);
+    h.advance(COACH_INTERVAL_MS); observations(h.db,"mochi",h.now(),1);
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(1);
+    expect(h.coach.state().cats[1]).toMatchObject({phase:"gathering",observations:1});
+    h.advance(30 * COACH_INTERVAL_MS); observations(h.db,"mochi",h.now(),30);
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    expect(h.coach.state().entries[0]?.status).toBe("no_change");
+    h.coach.reset("mochi");
+    expect(h.coach.state().cats[1]?.observations).toBe(0);
+    h.advance(COACH_INTERVAL_MS); observations(h.db,"mochi",h.now(),1);
+    await h.coach.tick();
+    expect(h.fetcher).toHaveBeenCalledTimes(2);
+    expect(h.coach.state().cats[1]?.observations).toBe(1);
   });
   it("preserves explicit rule edits on restart over an old overlay", async () => {
     const h = harness(); await h.coach.tick();
@@ -221,7 +271,7 @@ describe("rules and coins trainer", () => {
     expect(restarted.state().entries[0]).toMatchObject({ id: 42, status: "expired", review });
     expect(h.cfg.cats.tiger.minConviction).toBe(1);
     expect(() => restarted.resolve(42, "accept")).toThrow(/no longer/);
-    h.advance(COACH_INTERVAL_MS); observations(h.db, "tiger", h.now()); await restarted.tick();
+    h.advance(2 * COACH_INTERVAL_MS); observations(h.db, "tiger", h.now()); await restarted.tick();
     expect(restarted.state().entries[0]?.status).toBe("accepted");
     expect(restarted.state().entries).toHaveLength(2);
   });
@@ -385,7 +435,7 @@ describe("rules and coins trainer", () => {
     await h.coach.tick();
     expect(h.fetcher).not.toHaveBeenCalled();
     expect(h.coach.state().cats[0]?.observations).toBe(0);
-    observations(h.db, "tiger", h.now() + 2 * 3600000);
+    observations(h.db, "tiger", h.now() + COACH_EVIDENCE_WINDOW_MS + 24 * 3600000);
     await h.coach.tick(); expect(h.fetcher).not.toHaveBeenCalled();
     observations(h.db, "tiger", h.now());
     h.db.raw.prepare(`UPDATE decisions SET audit_json=json_set(audit_json,'$.entryDiagnostics',json(?)) WHERE json_extract(audit_json,'$.strategyVersion')=?`).run(JSON.stringify([{coin:"BTC",blockers:["momentum_not_confirmed"]}]), STRATEGY_VERSION);
@@ -424,12 +474,22 @@ describe("rules and coins trainer", () => {
 });
 
 describe("bounded numeric trainer changes", () => {
-  function numericHarness(patch: {field:string;from:number;to:number} = {field:"minConviction",from:1,to:0.75}) {
-    const h=harness({answer:{...answer,parameterChanges:[patch]}});
+  function numericHarness(patch: {field:string;from:number;to:number} = {field:"minConviction",from:1,to:0.75}, options: { trades?: number; grossPerTrade?: number; autoApply?: boolean } = {}) {
+    const h=harness({answer:{...answer,parameterChanges:[patch]},autoApply:options.autoApply});
     h.db.raw.exec(`UPDATE decisions SET choice='LONG_BTC', conviction=0.8, probabilities_json='{"LONG_BTC":0.8}',
       vetoed_by='weak_conviction p=0.80 c=0.8',
       audit_json=json_set(audit_json,'$.config.openGate.minConviction',1,'$.config.openGate.minProb',0.55)`);
     h.deps.context=()=>({position:null,diagnostics:[{blockers:[],indicatorsAgeMs:1000,maxIndicatorsAgeMs:180000}]});
+    for (let i = 0; i < (options.trades ?? 5); i++) {
+      for (const reducing of [false, true]) {
+        const ts = h.now() - 900000 + i * 60000 + (reducing ? 30000 : 0);
+        const orderId = h.db.insertOrder({decisionId:i+1,bee:"tiger",ts,clOrdId:`numeric-outcome-${i}-${reducing}`,
+          instId:"BTC-USDT-SWAP",side:reducing?"sell":"buy",contracts:10,reduceOnly:reducing,purpose:reducing?"close":"open"});
+        h.db.updateOrder(orderId,"filled",null,null);
+        h.db.insertFill({orderId,bee:"tiger",ts,instId:"BTC-USDT-SWAP",side:reducing?"sell":"buy",contracts:10,
+          px:100,notionalUsd:1000,feeUsd:0.1,realisedUsd:reducing?(options.grossPerTrade??2):0});
+      }
+    }
     return h;
   }
   it("changes a real fractional entry gate, persists it, and restores the owner baseline",async()=>{
@@ -446,7 +506,7 @@ describe("bounded numeric trainer changes", () => {
     expect(cfg.cats.tiger.minConviction).toBe(0.75);
     restarted.reset("tiger");
     expect(cfg.cats.tiger.minConviction).toBe(1);
-    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(10); // Only the recorded evidence; coaching places no orders.
   });
   it.each([
     {field:"minConviction",from:1,to:0.5},
@@ -473,13 +533,13 @@ describe("bounded numeric trainer changes", () => {
     expect(h.cfg.cats.tiger.minConviction).toBe(1);
   });
   it("requires completed trades for tightening a gate, not just many decisions",async()=>{
-    const h=numericHarness({field:"minConviction",from:1,to:1.25});
+    const h=numericHarness({field:"minConviction",from:1,to:1.25},{trades:0});
     await h.coach.tick();
     expect(h.coach.state().entries[0]?.status).toBe("failed");
     expect(h.cfg.cats.tiger.minConviction).toBe(1);
   });
   it.each([4, 5])("uses complete round trips, not partial trims or old strategies, for %i-trade evidence", async count => {
-    const h = numericHarness({field:"minConviction",from:1,to:1.25});
+    const h = numericHarness({field:"minConviction",from:1,to:1.25},{trades:0});
     let sequence = 0;
     const fill = (decisionId:number, purpose:string, contracts:number, realised:number, orderId?:number) => {
       const ts = h.now() - 120000 + sequence++;
@@ -519,5 +579,91 @@ describe("bounded numeric trainer changes", () => {
     expect(CoachAnswer.safeParse({...answer,parameterChanges:[
       {field:"minConviction",from:1,to:0.75},{field:"minActionProbability",from:0.55,to:0.5}
     ]}).success).toBe(false);
+  });
+
+  it.each([0, 4])("does not relax a gate after 31 vetoes with only %i completed trades", async trades => {
+    const h = numericHarness(undefined, {trades});
+    await h.coach.tick();
+    const entry = h.coach.state().entries[0]!;
+    expect(entry.status).toBe("failed");
+    expect(entry.evidence).toMatchObject({summary:{weakConviction:31},performance:{closedTrades:trades}});
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it.each([-1, 0.2])("rejects entry relaxation when five trades have nonpositive net P&L (gross each %s)", async grossPerTrade => {
+    const h = numericHarness(undefined, {grossPerTrade});
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("failed");
+    expect(h.cfg.cats.tiger.minConviction).toBe(1);
+  });
+  it("records a bounded numeric idea as advisory without changing parameters, rules, coins or orders", async () => {
+    const h = numericHarness(undefined, {autoApply:false}), before = structuredClone(h.cfg);
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]).toMatchObject({status:"advisory",review:{parameterChanges:[{field:"minConviction",from:1,to:0.75}]}});
+    expect(h.cfg).toEqual(before);
+    expect(h.changed).not.toHaveBeenCalled();
+    expect(h.db.raw.prepare("SELECT * FROM coach_rule_overrides").all()).toEqual([]);
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(10);
+  });
+  it("does not reuse completed outcomes collected before the last applied change", async () => {
+    const h = numericHarness(); await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    const changedAt = h.now();
+    h.advance(2 * COACH_INTERVAL_MS); observations(h.db,"tiger",h.now());
+    h.fetcher.mockImplementation(async () => envelope({...answer,parameterChanges:[{field:"minConviction",from:0.75,to:0.5}]}));
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]).toMatchObject({status:"failed",evidence:{since:changedAt,performance:{closedTrades:0}}});
+    expect(h.cfg.cats.tiger.minConviction).toBe(0.75);
+  });
+});
+
+describe("advisory trainer policy", () => {
+  it("defaults to advisory and records rules/coin suggestions without mutating strategy settings", async () => {
+    expect(loadConfig({}).coach.autoApply).toBe(false);
+    const h = harness({autoApply:false}), before = structuredClone(h.cfg);
+    await h.coach.tick();
+    const state = h.coach.state(), entry = state.entries[0]!;
+    expect(state).toMatchObject({autoApply:false,automatic:true,approvalMessage:null});
+    expect(entry).toMatchObject({status:"advisory",review:{rules:answer.rules,coins:answer.coins}});
+    expect(entry.resolvedAt).toBe(h.now());
+    expect(state.cats[0]).toMatchObject({activeReviewId:null,acceptedCount:0,phase:"scheduled"});
+    expect(h.cfg).toEqual(before);
+    expect(h.changed).not.toHaveBeenCalled();
+    expect(h.db.raw.prepare("SELECT * FROM coach_rule_overrides").all()).toEqual([]);
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toEqual([]);
+    expect(() => h.coach.resolve(entry.id,"accept")).toThrow(/Advisory/);
+    const payload = JSON.parse(String(h.fetcher.mock.calls[0]![1].body));
+    expect(payload.messages[0].content).toContain("Current trainer policy: ADVISORY");
+    expect(JSON.parse(payload.messages[1].content).trainerPolicy).toEqual({autoApply:false,mode:"advisory"});
+  });
+  it("continues scheduled advisory reviews and never replays a suggestion when automatic mode is enabled", async () => {
+    const h = harness({autoApply:false}); await h.coach.tick();
+    h.advance(COACH_INTERVAL_MS); observations(h.db,"tiger",h.now()); await h.coach.tick();
+    expect(h.coach.state().entries.map(entry=>entry.status)).toEqual(["advisory","advisory"]);
+    const cfg = h.config(); cfg.coach.autoApply = true;
+    const restarted = new CatCoach({...h.deps,cfg});
+    expect(cfg.slots.tiger.rules).not.toBe(answer.rules);
+    expect(restarted.state().cats[0]?.activeReviewId).toBeNull();
+    expect(h.changed).not.toHaveBeenCalled();
+  });
+  it("retires saved automatic overlays when restarted in advisory mode", async () => {
+    const h = harness(); await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("accepted");
+    const cfg = h.config(); cfg.coach.autoApply = false;
+    const baseline = coachValues(cfg,"tiger"), restarted = new CatCoach({...h.deps,cfg});
+    expect(coachValues(cfg,"tiger")).toEqual(baseline);
+    expect(restarted.state().entries[0]?.status).toBe("rolled_back");
+    expect(restarted.state().cats[0]?.activeReviewId).toBeNull();
+    expect(h.db.raw.prepare("SELECT * FROM coach_rule_overrides").all()).toEqual([]);
+    const automatic = h.config(); new CatCoach({...h.deps,cfg:automatic});
+    expect(coachValues(automatic,"tiger")).toEqual(baseline);
+  });
+  it("expires an in-flight automatic review when policy changes", async () => {
+    const h = harness();
+    h.fetcher.mockImplementationOnce(async () => { h.cfg.coach.autoApply = false; return envelope(answer); });
+    await h.coach.tick();
+    expect(h.coach.state().entries[0]?.status).toBe("expired");
+    expect(h.cfg.slots.tiger.rules).not.toBe(answer.rules);
+    expect(h.changed).not.toHaveBeenCalled();
   });
 });

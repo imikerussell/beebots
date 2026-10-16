@@ -1,19 +1,21 @@
+import { createHash } from "node:crypto";
 import { customBrain } from "./bees/custom.js";
 import { BRAINS } from "./bees/index.js";
-import { maxNotionalUsd, minutesSince, positionNotional, profitLockStop } from "./bees/common.js";
+import { entriesUsed, maxNotionalUsd, minutesSince, positionNotional, profitLockStop } from "./bees/common.js";
 import { coinOf, type Action, type BeeBrain, type BeeContext, type BeeState, type Position, type Side } from "./bees/types.js";
 import { BEES, type BeeId, type Config } from "./config.js";
+import { STRATEGY_VERSION } from "./decision.js";
 import { liveRules } from "./lab/brain.js";
 import type { EngineOverlay as Overlay, EngineStore as Db, EngineJev as Jev, EngineAnswer as JevAnswer, EngineResult as JevResult } from "./engine-ports.js";
 import type { Alerts } from "./alerts.js";
 import type { EventBus } from "./events.js";
 import type { Executor } from "./exec/executor.js";
 import { contractsFor, roundToLot } from "./exec/sizing.js";
-import { applyFill, applyFunding, freshBee, mark, rollDay, sizedRiskUsd } from "./ledger.js";
+import { applyFill, applyFunding, dayKey, freshBee, mark, rollDay, sizedRiskUsd } from "./ledger.js";
 import { log } from "./log.js";
 import type { MarketFeed } from "./market/data.js";
 import { safeError } from "./redact.js";
-import { applyRisk, type JevStatus, type Proposal } from "./risk.js";
+import { applyRisk, evaluateCaps, type JevStatus, type Proposal } from "./risk.js";
 import { buildSnapshot } from "./snapshot.js";
 
 const FUNDING_HOURS_UTC = [0, 8, 16];
@@ -23,6 +25,8 @@ const PULSE_MS = 4_000;
 /** How long a bee opens nothing after the exchange rejects one of its new orders. */
 export const ORDER_REJECT_PAUSE_MS = 10 * 60_000;
 const EQUITY_SNAPSHOT_MS = 10_000;
+
+export class EngineControlConflict extends Error {}
 
 export interface EngineDeps {
   cfg: Config;
@@ -138,6 +142,33 @@ export class Engine {
     this.stopped = true;
     for (const t of this.timers) clearTimeout(t);
     for (const id of BEES) this.d.db.saveBee(this.bees[id], this.now());
+  }
+
+  /** Owner-only command: renew one exhausted entry allowance without rewriting trade history. */
+  resetEntryLimit(id: BeeId) {
+    if (this.stopped || this.closedAt !== null || this.d.closeRequested?.())
+      throw new EngineControlConflict("This run is stopped or closing.");
+    if (this.ticking) throw new EngineControlConflict("A trading tick is in progress. Retry in a moment.");
+    const bee = this.bees[id], now = this.now(), max = this.d.cfg.cats[id].maxTradesPerDay;
+    if (!bee || bee.dayKey !== dayKey(now)) throw new EngineControlConflict("Wait for the next trading tick to update the UTC day.");
+    if (max <= 0) throw new EngineControlConflict("Entries are disabled by the configured limit.");
+    if ((bee.cap !== null && bee.cap !== "trade_cap") || entriesUsed(bee) < max)
+      throw new EngineControlConflict("Only an exhausted daily entry limit can be reset.");
+    const updated = { ...bee, entryLimitBaseline: bee.tradesToday, cap: null };
+    const otherCap = evaluateCaps({ ...this.ctx(id, now), bee: updated }).cap;
+    if (otherCap) throw new EngineControlConflict(`Entry reset cannot clear ${otherCap}.`);
+    const detail = `Owner reset entry allowance: ${entriesUsed(bee)} used -> 0/${max}; ${bee.tradesToday} actual entries today.`;
+    const { db, bus } = this.d;
+    db.raw.exec("BEGIN IMMEDIATE");
+    try {
+      db.saveBee(updated, now);
+      db.insertCap(id, now, "entry_limit_reset", detail);
+      db.raw.exec("COMMIT");
+    } catch (error) { db.raw.exec("ROLLBACK"); throw error; }
+    Object.assign(bee, updated);
+    bus.emit("cap", { bee: id, cap: null, event: "entry_limit_reset", detail,
+      tradesToday: bee.tradesToday, entriesUsed: 0, maxTradesPerDay: max }, now);
+    return { cat: id, entriesUsed: 0, tradesToday: bee.tradesToday, maxTradesPerDay: max };
   }
 
   private loop(fn: () => Promise<void>, everyMs: number) {
@@ -257,6 +288,22 @@ export class Engine {
     // chose could be acted on; only code can close the position (stop, time stop, loss stop) until 00:00 UTC.
     if (bee.cap === "trade_cap" || bee.cap === "fee_budget") return this.decideBenched(id, now);
     const ctx = this.ctx(id, now);
+    if (brain.decisionKey) {
+      const signalKey = brain.decisionKey(ctx);
+      if (signalKey === null) return this.decideBenched(id, now, "waiting for a valid completed signal bar; protection remains active");
+      const revision = createHash("sha256").update(JSON.stringify({
+        version: STRATEGY_VERSION, style: brain.id, strategy: brain.strategy,
+        parameters: cfg.strategies[id], limits: cfg.cats[id],
+        rules: cfg.slots[id].rules, coins: cfg.slots[id].coins,
+      })).digest("hex").slice(0, 16);
+      const key = `${revision}:${signalKey}`;
+      if (bee.strategyDecisionKey === key)
+        return this.decideBenched(id, now, "waiting for the next completed signal bar; protection remains active");
+      // Consume before inference or execution. An outage, veto, fill or process restart must not
+      // repeatedly sample the same signal until a different answer happens to allow a trade.
+      bee.strategyDecisionKey = key;
+      db.saveBee(bee, now);
+    }
     const menu = brain.menu(ctx);
     const snap = buildSnapshot(brain, ctx);
     if (brain.id === "boozy" && bee.top1.coin) snap.state.top1 = `${bee.top1.coin} x${bee.top1.streak}`;
@@ -364,15 +411,17 @@ export class Engine {
     db.saveBee(bee, now);
   }
 
-  // ---------- benched: ride the position ----------
+  // ---------- protection while benched or waiting for a new signal bar ----------
 
-  private async decideBenched(id: BeeId, now: number): Promise<void> {
+  private async decideBenched(id: BeeId, now: number, waitingStatus?: string): Promise<void> {
     const { db } = this.d;
     const bee = this.bees[id];
     const ctx = this.ctx(id, now);
+    const brain = this.brain(id);
     const risk = applyRisk({
       ctx,
-      brain: this.brain(id),
+      // This path may reduce risk but must never force an entry or rebalance while waiting.
+      brain: waitingStatus ? { ...brain, neverForce: true, rebalance: undefined } : brain,
       proposal: null,
       jev: "no_options",
       sizeMult: this.sizeMult(now),
@@ -386,7 +435,8 @@ export class Engine {
     }
     bee.cap = risk.cap;
     const prev = this.last[id];
-    this.last[id] = { choice: null, top3: prev?.top3 ?? [], confidence: null, latencyMs: null, status: risk.status, ts: now };
+    const status = waitingStatus && !risk.cap && !risk.forcedBy ? waitingStatus : risk.status;
+    this.last[id] = { choice: null, top3: waitingStatus ? [] : prev?.top3 ?? [], confidence: null, latencyMs: null, status, ts: now };
     if (risk.action.kind !== "none") {
       const decisionId = db.insertDecision({
         bee: id, ts: now, stateHash: "", stateJson: "{}", menuJson: "[]", choice: null, probabilities: null, confidence: null,
@@ -404,8 +454,8 @@ export class Engine {
       this.lastPulseAt[id] = now;
       const p = bee.position;
       this.d.bus.emit("decision", {
-        bee: id, choice: p ? `RIDING ${p.coin}` : "BENCHED", probabilities: [], confidence: null, conviction: null, latencyMs: null,
-        tokens: null, jevUsd: 0, action: "hold", vetoedBy: null, forcedBy: null, status: risk.status, jev: "benched", pulse: true,
+        bee: id, choice: waitingStatus ? (p ? `HOLDING ${p.coin}` : "WAITING") : p ? `RIDING ${p.coin}` : "BENCHED", probabilities: [], confidence: null, conviction: null, latencyMs: null,
+        tokens: null, jevUsd: 0, action: "hold", vetoedBy: null, forcedBy: null, status, jev: waitingStatus ? "no_options" : "benched", pulse: true,
         ...this.liveChip(id),
       }, now);
     }
@@ -817,6 +867,7 @@ export class Engine {
         : null,
       flatMinutes: p ? null : Math.round(minutesSince(b.flatSince, this.now())),
       tradesToday: b.tradesToday,
+      entriesUsed: entriesUsed(b),
       maxTradesPerDay: knobs.maxTradesPerDay,
       feesTodayUsd: r2(b.feesTodayUsd),
       feeBudgetUsd: knobs.feeBudgetUsdDay,

@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BEES, loadConfig, type Config } from "../src/config.js";
+import { BEES, loadConfig, type BeeId, type Config } from "../src/config.js";
+import type { BeeBrain } from "../src/bees/types.js";
 import type {
   DecisionAsk,
   DecisionProvider,
@@ -42,6 +43,7 @@ function answer(ask: DecisionAsk, choice = "WAIT"): DecisionResult {
     source: "model",
   };
 }
+const isDark = (ask: DecisionAsk) => ask.convictionLabels[0] === "meh";
 async function harness(
   decide: DecisionProvider["decide"] = async (ask) => answer(ask),
   opts: {
@@ -51,6 +53,8 @@ async function harness(
     clock?: () => number;
     closeRequested?: () => boolean;
     coachFetch?: typeof fetch;
+    decisionKey?: BeeBrain["decisionKey"];
+    activeCadence?: boolean;
   } = {},
 ) {
   let clock = NOW;
@@ -105,6 +109,12 @@ async function harness(
     closeRequested: opts.closeRequested,
     coachFetch: opts.coachFetch,
   });
+  // Existing scenarios exercise tick mechanics independently of strategy cadence. The cadence
+  // cases below opt in explicitly; no shared production brain is mutated by the test harness.
+  const core = engine.core as unknown as { brain(id: BeeId): BeeBrain };
+  const brain = core.brain.bind(core);
+  if (!opts.activeCadence)
+    vi.spyOn(core, "brain").mockImplementation(id => ({ ...brain(id), decisionKey: opts.decisionKey }));
   await engine.start();
   let closed = false;
   const close = async () => {
@@ -122,13 +132,222 @@ async function harness(
     v,
     feed,
     close,
+    now,
     advance: (ms: number) => {
       clock += ms;
       v.tickers.get(s.instId)!.ts = clock;
     },
   };
 }
+type Harness = Awaited<ReturnType<typeof harness>>;
+function markPrice(h: Harness, mid: number) {
+  Object.assign(h.s, { mid, last: mid, bid: mid * 0.99995, ask: mid * 1.00005 });
+  Object.assign(h.v.tickers.get(h.s.instId)!, { mid, last: mid, bid: h.s.bid, ask: h.s.ask });
+}
+async function completeNewBars(h: Harness, elapsedMs: number) {
+  h.advance(elapsedMs);
+  const at = h.now();
+  h.s.confirmed15m = { close: h.s.mid, ts: Math.floor(at / 900000) * 900000 - 900000 };
+  h.s.confirmed4h = { close: h.s.mid, ts: Math.floor(at / 14400000) * 14400000 - 14400000 };
+  h.s.refreshedAt = h.v.ts = at;
+  await h.engine.refreshMarket();
+}
 describe("Catfolio engine, protection and recovery", () => {
+  const completedBar: NonNullable<BeeBrain["decisionKey"]> = ctx => {
+    const ts = [...ctx.view.stats.values()][0]?.confirmed15m?.ts;
+    return ts === undefined ? null : String(ts);
+  };
+  it("attempts each completed signal bar once and holds an unchanged invested signal without inference", async () => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask, ask.menu.LONG_BTC ? "LONG_BTC" : "HOLD"));
+    const h = await harness(decide, { decisionKey: completedBar });
+    await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(2);
+    const firstKeys = BEES.map(id => h.engine.bees[id].strategyDecisionKey);
+    expect(firstKeys.every(Boolean)).toBe(true);
+    expect(BEES.every(id => !!h.engine.bees[id].position)).toBe(true);
+    for (let i = 0; i < 3; i++) { h.advance(10000); await h.engine.tick(); }
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(h.db.raw.prepare("SELECT * FROM orders WHERE reduce_only=1").all()).toHaveLength(0);
+    expect(h.engine.snapshot().cats.every(c => c.cap === null)).toBe(true);
+    expect(h.db.recentEvents(30).some(row => JSON.parse(row).status?.includes("next completed signal bar"))).toBe(true);
+    await completeNewBars(h,900000);
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(BEES.map(id => h.engine.bees[id].strategyDecisionKey)).not.toEqual(firstKeys);
+    expect(h.db.raw.prepare("SELECT * FROM orders WHERE reduce_only=1").all()).toHaveLength(0);
+  });
+  it("consumes failed model attempts until the next completed signal bar", async () => {
+    const decide = vi.fn(async (): Promise<DecisionResult> => ({ok:false,reason:"timeout",latencyMs:1}));
+    const h = await harness(decide, {decisionKey:completedBar});
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(h.db.raw.prepare("SELECT * FROM decisions WHERE jev_error IS NOT NULL").all()).toHaveLength(2);
+    await completeNewBars(h,900000);
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(4);
+    expect(h.db.raw.prepare("SELECT * FROM decisions WHERE jev_error IS NOT NULL").all()).toHaveLength(4);
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
+  });
+  it("uses the active fifteen-minute and four-hour clocks independently", async () => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask));
+    const h = await harness(decide,{activeCadence:true});
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(2);
+    const firstMochiKey = h.engine.bees.mochi.strategyDecisionKey;
+    await completeNewBars(h,15*60000);
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(3);
+    expect(h.engine.bees.mochi.strategyDecisionKey).toBe(firstMochiKey);
+    await completeNewBars(h,225*60000);
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(5);
+    expect(h.engine.bees.mochi.strategyDecisionKey).not.toBe(firstMochiKey);
+    expect(h.db.raw.prepare("SELECT bee,COUNT(*) AS n FROM decisions GROUP BY bee ORDER BY bee").all()).toEqual([{bee:"mochi",n:2},{bee:"tiger",n:3}]);
+  });
+  it("keeps active-brain stop protection working after the held instrument loses its signal bar", async () => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask,"LONG_BTC"));
+    const h = await harness(decide,{activeCadence:true});
+    await h.engine.tick();
+    h.s.confirmed15m = undefined;
+    h.engine.bees.tiger.position!.stopPx = 101;
+    await h.engine.tick();
+    expect(h.engine.bees.tiger.position).toBeNull();
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(h.db.raw.prepare("SELECT purpose FROM orders WHERE bee='tiger' AND reduce_only=1").get()).toMatchObject({purpose:"stop"});
+  });
+  it("persists a consumed signal before inference and does not re-query it after restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cat-signal-cadence-")), path = join(dir, "run.sqlite");
+    const db = new Db(path);
+    const decide = vi.fn(async (ask: DecisionAsk) => {
+      const id = isDark(ask) ? "tiger" : "mochi";
+      expect(db.loadBee(id)?.strategyDecisionKey).toBeTruthy();
+      return answer(ask);
+    });
+    const first = await harness(decide, { db, decisionKey: completedBar });
+    await first.engine.tick(); const key = first.engine.bees.tiger.strategyDecisionKey;
+    await first.close();
+    const resumedDecide = vi.fn(async (ask: DecisionAsk) => answer(ask));
+    const resumed = await harness(resumedDecide, { db: new Db(path), decisionKey: completedBar });
+    await resumed.engine.tick();
+    expect(resumed.engine.bees.tiger.strategyDecisionKey).toBe(key);
+    expect(resumedDecide).not.toHaveBeenCalled();
+    await resumed.close(); rmSync(dir, { recursive: true, force: true });
+  });
+  it.each(["rules", "parameters"])("invalidates a consumed signal when effective %s change", async change => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask));
+    const h = await harness(decide, { decisionKey: completedBar });
+    await h.engine.tick(); const key = h.engine.bees.tiger.strategyDecisionKey;
+    if (change === "rules") h.cfg.slots.tiger.rules += " Be selective.";
+    else h.cfg.strategies.tiger.minMomentumPct += 0.01;
+    await h.engine.tick(); await h.engine.tick();
+    expect(decide).toHaveBeenCalledTimes(3);
+    expect(h.engine.bees.tiger.strategyDecisionKey).not.toBe(key);
+  });
+  it("holds on a missing completed bar without logging an inference failure or suppressing caps", async () => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask, "LONG_BTC"));
+    const h = await harness(decide, { decisionKey: () => null });
+    h.engine.bees.tiger.tradesToday = h.cfg.cats.tiger.maxTradesPerDay;
+    await h.engine.tick();
+    expect(decide).not.toHaveBeenCalled();
+    expect(h.engine.bees.tiger.cap).toBe("trade_cap");
+    expect(h.engine.bees.mochi.cap).toBeNull();
+    expect(h.engine.bees.mochi.strategyDecisionKey).toBeUndefined();
+    expect(h.db.raw.prepare("SELECT * FROM decisions WHERE jev_error IS NOT NULL").all()).toHaveLength(0);
+    expect(h.db.recentEvents(30).some(row => JSON.parse(row).status?.includes("valid completed signal bar"))).toBe(true);
+  });
+  it.each(["stop", "time_stop", "loss_stop", "trend_reversal"])("still executes %s protection on a consumed signal bar", async reason => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask, "LONG_BTC"));
+    const h = await harness(decide, { decisionKey: completedBar });
+    await h.engine.tick();
+    const id = reason === "trend_reversal" ? "mochi" : "tiger", bee = h.engine.bees[id];
+    expect(bee.position).not.toBeNull();
+    if (reason === "stop") bee.position!.stopPx = 101;
+    if (reason === "time_stop") bee.position!.openedAt = NOW - (h.cfg.strategies.tiger.maxHoldMinutes + 1) * 60000;
+    if (reason === "loss_stop") bee.cashUsd = bee.dayStartEquityUsd * 0.8;
+    if (reason === "trend_reversal") h.s.trend = trend({ score: -9, shortOn: 9, longOn: 0 });
+    await h.engine.tick();
+    expect(bee.position).toBeNull();
+    await h.engine.tick(); // A protective close does not make this same signal eligible for re-entry.
+    expect(bee.position).toBeNull();
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(h.db.raw.prepare("SELECT purpose FROM orders WHERE bee=? AND reduce_only=1").all(id)).toEqual([{ purpose: reason }]);
+  });
+  it.each(BEES)("renews %s's entry allowance without erasing books or bypassing the next cap", async id => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask, "LONG_BTC"));
+    const h = await harness(decide), bee = h.engine.bees[id], max = h.cfg.cats[id].maxTradesPerDay;
+    bee.tradesToday = max; bee.cap = "trade_cap"; bee.feesTodayUsd = 0.1;
+    bee.lastOrderAt = NOW;
+    const before = structuredClone(bee), other = structuredClone(h.engine.bees[id === "tiger" ? "mochi" : "tiger"]);
+    expect(h.engine.resetEntryLimit(id)).toMatchObject({cat:id,entriesUsed:0,tradesToday:max,maxTradesPerDay:max});
+    expect(bee).toEqual({...before,cap:null,entryLimitBaseline:max});
+    expect(h.engine.bees[id === "tiger" ? "mochi" : "tiger"]).toEqual(other);
+    expect(h.db.raw.prepare("SELECT * FROM orders").all()).toHaveLength(0);
+    expect(h.db.raw.prepare("SELECT * FROM caps WHERE cap='entry_limit_reset'").all()).toHaveLength(1);
+    expect(h.db.recentEvents(20).some(row => JSON.parse(row).event === "entry_limit_reset")).toBe(true);
+    expect(h.engine.snapshot().cats.find(c => c.bee === id)).toMatchObject({entriesUsed:0,tradesToday:max,cap:null});
+    expect(() => h.engine.resetEntryLimit(id)).toThrow(/exhausted/);
+    // The reset leaves the cooldown intact; a fresh tick cannot immediately re-enter.
+    await h.engine.tick();
+    expect(bee.position).toBeNull();
+    expect(bee.tradesToday).toBe(max);
+    bee.lastOrderAt = null;
+    await h.engine.tick();
+    expect(bee.position).not.toBeNull();
+    expect(bee.tradesToday).toBe(max + 1);
+    // Consuming the renewed allowance blocks further entry decisions again.
+    bee.tradesToday = 2 * max;
+    await h.engine.tick();
+    expect(bee.cap).toBe("trade_cap");
+    expect(h.engine.snapshot().cats.find(c => c.bee === id)?.entriesUsed).toBe(max);
+  });
+  it.each(["loss_stop", "fee_budget", "retired", "unrecorded_loss", "unrecorded_fee", "zero_limit", "new_day"])("refuses an entry reset for %s", async reason => {
+    const h = await harness(), bee = h.engine.bees.tiger;
+    bee.tradesToday = h.cfg.cats.tiger.maxTradesPerDay; bee.cap = "trade_cap";
+    if (reason === "loss_stop" || reason === "fee_budget" || reason === "retired") bee.cap = reason;
+    if (reason === "unrecorded_loss") bee.equityUsd = bee.dayStartEquityUsd * 0.8;
+    if (reason === "unrecorded_fee") bee.feesTodayUsd = h.cfg.cats.tiger.feeBudgetUsdDay;
+    if (reason === "zero_limit") h.cfg.cats.tiger.maxTradesPerDay = 0;
+    if (reason === "new_day") h.advance(86400000);
+    const before = structuredClone(bee);
+    expect(() => h.engine.resetEntryLimit("tiger")).toThrow();
+    expect(bee).toEqual(before);
+    expect(h.db.raw.prepare("SELECT * FROM caps").all()).toHaveLength(0);
+  });
+  it("does not race a trading tick or change a stopped run", async () => {
+    const h = await harness();
+    h.engine.bees.tiger.tradesToday = h.cfg.cats.tiger.maxTradesPerDay;
+    h.engine.bees.tiger.cap = "trade_cap";
+    let release!: () => void;
+    h.feed.refreshTickers = () => new Promise<void>(resolve => { release = resolve; });
+    const tick = h.engine.tick(); await Promise.resolve();
+    expect(() => h.engine.resetEntryLimit("tiger")).toThrow(/in progress/);
+    release(); await tick;
+    await h.engine.stop();
+    expect(() => h.engine.resetEntryLimit("tiger")).toThrow(/stopped/);
+  });
+  it("rolls back the allowance when its durable audit cannot be saved", async () => {
+    const h = await harness(), bee = h.engine.bees.tiger;
+    bee.tradesToday = h.cfg.cats.tiger.maxTradesPerDay; bee.cap = "trade_cap";
+    h.db.saveBee(bee, NOW);
+    h.db.raw.exec("CREATE TRIGGER reject_reset BEFORE INSERT ON caps BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+    expect(() => h.engine.resetEntryLimit("tiger")).toThrow(/audit unavailable/);
+    expect(bee.entryLimitBaseline).toBeUndefined();
+    expect(h.db.loadBee("tiger")).toMatchObject({cap:"trade_cap",tradesToday:bee.tradesToday});
+    expect(h.db.loadBee("tiger")?.entryLimitBaseline).toBeUndefined();
+  });
+  it("persists entry resets across restart and expires them on the next UTC day", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cat-entry-reset-")), path = join(dir, "run.sqlite");
+    const first = await harness(undefined, {db:new Db(path)});
+    first.engine.bees.tiger.tradesToday = first.cfg.cats.tiger.maxTradesPerDay;
+    first.engine.bees.tiger.cap = "trade_cap";
+    first.engine.resetEntryLimit("tiger"); await first.close();
+    const resumed = await harness(undefined, {db:new Db(path)});
+    expect(resumed.engine.snapshot().cats[0]).toMatchObject({entriesUsed:0,tradesToday:first.cfg.cats.tiger.maxTradesPerDay,cap:null});
+    resumed.advance(86400000); await resumed.engine.tick();
+    expect(resumed.engine.bees.tiger.entryLimitBaseline).toBeUndefined();
+    expect(resumed.engine.bees.tiger.tradesToday).toBe(0);
+    await resumed.close(); rmSync(dir,{recursive:true,force:true});
+  });
   it("reports stale market data separately from a running engine and clears it on recovery", async () => {
     const h = await harness();
     h.advance(5 * h.cfg.dataRefreshMs + 1);
@@ -244,7 +463,7 @@ describe("Catfolio engine, protection and recovery", () => {
       .get("tiger") as { audit: string };
     const audit = JSON.parse(row.audit);
     expect(audit).toMatchObject({
-      strategyVersion: "catfolio-7-configurable-strategies",
+      strategyVersion: "catfolio-8-bar-driven-strategies",
       rubricVersion: "selected-setup-conviction-2",
       config: { model: "", slippageBps: 2 },
     });
@@ -546,39 +765,54 @@ describe("Catfolio engine, protection and recovery", () => {
 
 
 describe("active Dark Wall-E execution", () => {
-  const isDark = (ask: DecisionAsk) => ask.strategy.includes("active intraday");
   it("executes a short, places its stop above entry, and stops out even during model failure", async () => {
     let unavailable = false;
-    const h = await harness(async ask => unavailable ? {ok:false,reason:"timeout",latencyMs:1} : answer(ask,isDark(ask) ? "SHORT_BTC" : "WAIT"));
+    const decide = vi.fn(async (ask: DecisionAsk): Promise<DecisionResult> => unavailable ? {ok:false,reason:"timeout",latencyMs:1} : answer(ask,isDark(ask) ? "SHORT_BTC" : "WAIT"));
+    const h = await harness(decide,{activeCadence:true});
     h.s.ret1hPct = -1; h.s.macdHistPct = -0.2;
     await h.engine.tick();
     const p = h.engine.bees.tiger.position!;
     expect(p.side).toBe("short"); expect(p.stopPx).toBeGreaterThan(p.entryPx);
     expect(h.db.raw.prepare("SELECT side,reduce_only FROM orders WHERE bee='tiger'").get()).toMatchObject({side:"sell",reduce_only:0});
-    unavailable = true; h.s.mid = p.stopPx! + 0.01;
+    unavailable = true; markPrice(h,p.stopPx! + 0.01);
     await h.engine.tick();
     expect(h.engine.bees.tiger.position).toBeNull();
+    expect(decide).toHaveBeenCalledTimes(2); // Stop execution must not wait for or sample the failing model.
+    expect(h.engine.bees.tiger.totals.realisedUsd).toBeLessThan(0);
     expect(h.db.raw.prepare("SELECT side,reduce_only FROM orders WHERE bee='tiger' ORDER BY id DESC LIMIT 1").get()).toMatchObject({side:"buy",reduce_only:1});
   });
-  it("allows another entry after a close and cooldown, and closes at the two-hour limit", async () => {
-    let choice = "LONG_BTC";
-    const h = await harness(async ask => answer(ask,isDark(ask) ? choice : "WAIT"));
+  it("requires a new signal and cooldown after a deterministic exit, then closes at the holding limit", async () => {
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask,isDark(ask) ? "LONG_BTC" : "WAIT"));
+    const h = await harness(decide,{activeCadence:true,cfg:loadConfig({TIGER_COOLDOWN_MINUTES:"20"})});
     await h.engine.tick(); expect(h.engine.bees.tiger.tradesToday).toBe(1);
-    choice = "CLOSE"; await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
-    choice = "LONG_BTC"; await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
-    h.advance(5 * 60000); await h.engine.refreshMarket(); h.s.refreshedAt = NOW + 5 * 60000;
+    await completeNewBars(h,15*60000);
+    h.s.ret1hPct = -1; h.s.macdHistPct = -0.2;
+    await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
+    expect(h.db.raw.prepare("SELECT purpose FROM orders WHERE bee='tiger' ORDER BY id DESC LIMIT 1").get()).toMatchObject({purpose:"momentum_reversal"});
+    h.s.ret1hPct = 1; h.s.macdHistPct = 0.2;
+    await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
+    await completeNewBars(h,15*60000); // A new bar is available, but the 20-minute exit cooldown is not over.
+    await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
+    expect(h.db.raw.prepare("SELECT vetoed_by FROM decisions WHERE bee='tiger' ORDER BY id DESC LIMIT 1").get()).toMatchObject({vetoed_by:"cooldown 5m"});
+    await completeNewBars(h,15*60000);
     await h.engine.tick(); expect(h.engine.bees.tiger.tradesToday).toBe(2);
     expect(h.engine.bees.tiger.position).not.toBeNull();
-    choice = "HOLD"; h.advance(120 * 60000); await h.engine.refreshMarket();
+    await completeNewBars(h,120*60000);
     await h.engine.tick(); expect(h.engine.bees.tiger.position).toBeNull();
     expect(h.db.raw.prepare("SELECT forced_by FROM decisions WHERE bee='tiger' ORDER BY id DESC LIMIT 1").get()).toMatchObject({forced_by:"time_stop"});
   });
-  it("closes a long before opening a short reversal, and counts the new entry", async () => {
+  it("closes a reversed long deterministically and waits until the following bar before entering short", async () => {
     let choice = "LONG_BTC";
-    const h = await harness(async ask => answer(ask,isDark(ask) ? choice : "WAIT"));
+    const decide = vi.fn(async (ask: DecisionAsk) => answer(ask,isDark(ask) ? choice : "WAIT"));
+    const h = await harness(decide,{activeCadence:true});
     await h.engine.tick();
-    h.advance(5 * 60000); await h.engine.refreshMarket(); h.s.refreshedAt = NOW + 5 * 60000;
-    h.s.ret1hPct = -1; h.s.macdHistPct = -0.2; choice = "FLIP_SHORT";
+    await completeNewBars(h,15*60000);
+    h.s.ret1hPct = -1; h.s.macdHistPct = -0.2; choice = "SHORT_BTC";
+    await h.engine.tick(); await h.engine.tick();
+    expect(h.engine.bees.tiger.position).toBeNull();
+    expect(h.engine.bees.tiger.tradesToday).toBe(1);
+    expect(decide).toHaveBeenCalledTimes(2);
+    await completeNewBars(h,15*60000);
     await h.engine.tick();
     expect(h.engine.bees.tiger.position?.side).toBe("short");
     expect(h.engine.bees.tiger.tradesToday).toBe(2);
@@ -594,13 +828,15 @@ describe("automatic coach changes in the running engine", () => {
     coins: "BTC", reason: "Compare momentum with the fixed trend gate.", quip: "DARK Wall-E, check your signals before flexing those claws.",
     note: "Your cat needs evidence before enthusiasm. False breakouts can still lose money.",
   }) } }] }))) as typeof fetch;
-  function seedHistory(db: Db) {
+  function seedHistory(db: Db, cat: BeeId = "tiger") {
+    const signalPeriod = (cat === "tiger" ? 15 : 240) * 60000;
     for (let i = 0; i < 31; i++) db.raw.prepare(`INSERT INTO decisions(bee,ts,choice,menu_json,action_json,status,audit_json)
-      SELECT bee,?,choice,menu_json,action_json,status,audit_json FROM decisions WHERE bee='tiger' ORDER BY id LIMIT 1`).run(NOW - 3600000 - i * 60000);
+      SELECT bee,?,choice,menu_json,action_json,status,audit_json FROM decisions WHERE bee=? ORDER BY id LIMIT 1`)
+      .run(NOW - (i + 1) * signalPeriod, cat);
   }
   it("hot-applies validated rules and coins and keeps numeric gates, sizing and exits", async () => {
     const h = await harness(async (ask) => answer(ask, ask.strategy.includes("Pick LONG_BTC when r1h_pct") && ask.menu.LONG_BTC ? "LONG_BTC" : "WAIT"), {
-      cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
+      cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only", COACH_AUTO_APPLY: "true" }), coachFetch,
     });
     h.s.intraday!.tiger.trend.score = 3;
     h.s.intraday!.mochi.trend.score = 2;
@@ -623,7 +859,7 @@ describe("automatic coach changes in the running engine", () => {
     let slow = false;
     const releases: Array<() => void> = [];
     const h = await harness(async (ask) => slow ? new Promise((resolve) => releases.push(() => resolve(answer(ask)))) : answer(ask), {
-      cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only" }), coachFetch,
+      cfg: loadConfig({ AI_GATEWAY_API_KEY: "test-only", COACH_AUTO_APPLY: "true" }), coachFetch,
     });
     h.s.intraday!.tiger.trend.score = 2;
     h.s.intraday!.mochi.trend.score = 2;
@@ -639,23 +875,23 @@ describe("automatic coach changes in the running engine", () => {
   });
 });
 
-describe("restored source actions reach the executor", () => {
+describe("active strategy position management reaches the executor", () => {
   function pick(ask: DecisionAsk, choice: string) {
-    if (ask.strategy.includes("Dark Wall-E")) return answer(ask, ask.menu.HOLD ? "HOLD" : "WAIT");
+    if (isDark(ask)) return answer(ask, ask.menu.HOLD ? "HOLD" : "WAIT");
     return answer(ask, choice);
   }
   it("opens a short and adds to the winner without resetting its stop, entry score or opening count", async () => {
     let choice = "SHORT_BTC";
     const cfg = loadConfig({MOCHI_COOLDOWN_MINUTES:"0"});
-    const h = await harness(async ask => pick(ask, choice), {cfg});
+    const h = await harness(async ask => pick(ask, choice), {cfg,activeCadence:true});
     h.s.trend!.score = -9;
     await h.engine.tick();
     h.engine.bees.mochi.position!.stopPx = 99; // A trailed stop frees risk budget for a winner add.
     const before = structuredClone(h.engine.bees.mochi.position!);
     expect(before.side).toBe("short");
     expect(before.initialStopPx).toBeGreaterThan(before.entryPx);
-    h.s.mid=95;
-    Object.assign(h.v.tickers.get(h.s.instId)!,{mid:95,bid:94.995,ask:95.005});
+    markPrice(h,95);
+    await completeNewBars(h,4*3600000);
     choice="ADD_TO_WINNER";
     await h.engine.tick();
     const after=h.engine.bees.mochi.position!;
@@ -671,13 +907,17 @@ describe("restored source actions reach the executor", () => {
       {purpose:"open",side:"sell",reduce_only:0},{purpose:"add",side:"sell",reduce_only:0},
     ]);
   });
-  it("closes a long before opening the short side of a flip",async()=>{
+  it("closes a failed four-hour trend before considering the opposite side on a later bar",async()=>{
     let choice="LONG_BTC";
-    const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"})});
+    const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"}),activeCadence:true});
     await h.engine.tick();
     expect(h.engine.bees.mochi.position!.side).toBe("long");
+    await completeNewBars(h,4*3600000);
     choice="SHORT_BTC"; h.s.trend!.score=-9; await h.engine.tick();
     expect(h.engine.bees.mochi.position).toBeNull();
+    await h.engine.tick();
+    expect(h.engine.bees.mochi.position).toBeNull();
+    await completeNewBars(h,4*3600000);
     await h.engine.tick();
     expect(h.engine.bees.mochi.position!.side).toBe("short");
     expect(h.engine.bees.mochi.tradesToday).toBe(2);
@@ -685,9 +925,9 @@ describe("restored source actions reach the executor", () => {
       {purpose:"open",side:"buy",reduce_only:0},{purpose:"trend_reversal",side:"sell",reduce_only:1},{purpose:"open",side:"sell",reduce_only:0},
     ]);
   });
-  it.each(["rejected","unknown","partial"] as const)("does not open the switch leg after a %s close",async outcome=>{
+  it.each(["rejected","unknown","partial"] as const)("does not open the opposite side after a %s protective close",async outcome=>{
     let choice="LONG_BTC";
-    const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"}),executor:sim=>({
+    const h=await harness(async ask=>pick(ask,choice),{cfg:loadConfig({MOCHI_COOLDOWN_MINUTES:"0"}),activeCadence:true,executor:sim=>({
       kind:"sim",init:async()=>{},positions:async()=>null,fundingBills:async()=>null,feesFor:async()=>null,
       market:async(id,req)=>req.reduceOnly
         ? outcome === "partial" ? sim.market(id,{...req,contracts:Math.floor(req.contracts/2)})
@@ -703,7 +943,7 @@ describe("restored source actions reach the executor", () => {
   });
   it("does not force weak entries or rebalance a held position",async()=>{
     let choice="LONG_BTC", conviction=0;
-    const h=await harness(async ask=>ask.strategy.includes("Dark Wall-E") ? answer(ask,"WAIT")
+    const h=await harness(async ask=>isDark(ask) ? answer(ask,"WAIT")
       : {...answer(ask,choice),conviction});
     await h.engine.tick();
     expect(h.engine.bees.mochi.position).toBeNull();

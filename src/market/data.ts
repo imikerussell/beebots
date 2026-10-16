@@ -20,6 +20,7 @@ import type {
   Ticker,
 } from "./types.js";
 import { gateUniverse } from "./universe.js";
+import { trendBreakoutSignal, type TrendBreakoutOptions } from "./strategy-signals.js";
 
 export interface NewsReading {
   /** Hourly mention counts, oldest first (last = current hour). */
@@ -41,6 +42,7 @@ export interface FeedOpts {
   /** Coins that always get the original four-hour trend data. */
   trendCoins: string[];
   allowedCoins?: string[];
+  trendBreakoutOptions?: TrendBreakoutOptions;
 }
 
 const HOUR = 3_600_000;
@@ -51,9 +53,12 @@ export function computeStats(
   c15: Candle[],
   c1h: Candle[],
 ): CoinStats {
+  c15 = c15.filter(c=>c.confirmed);
+  c1h = c1h.filter(c=>c.confirmed);
   const closes15 = c15.map((c) => c.c);
   const closes1h = c1h.map((c) => c.c);
   const last = t.last;
+  const signalClose = closes15.at(-1), hourlyClose = closes1h.at(-1);
   const confirmed15m = c15.filter((c) => c.confirmed).at(-1);
   const bb = bollinger(c15);
   const a = atr(c15);
@@ -77,11 +82,11 @@ export function computeStats(
     pctB: bb?.pctB ?? null,
     bbWidthPct: bb?.widthPct ?? null,
     bbMid: bb?.mid ?? null,
-    atr14Pct: a !== null && last ? (a / last) * 100 : null,
-    macdHistPct: m && last ? (m.hist / last) * 100 : null,
-    ret1hPct: pctChange(closes15[closes15.length - 5], last),
-    ret24hPct: pctChange(closes1h[closes1h.length - 25], last),
-    ret7dPct: pctChange(closes1h[closes1h.length - 169], last),
+    atr14Pct: a !== null && signalClose ? (a / signalClose) * 100 : null,
+    macdHistPct: m && signalClose ? (m.hist / signalClose) * 100 : null,
+    ret1hPct: pctChange(closes15[closes15.length - 5], signalClose),
+    ret24hPct: pctChange(closes1h[closes1h.length - 25], hourlyClose),
+    ret7dPct: pctChange(closes1h[closes1h.length - 169], hourlyClose),
     volZ: volLatest !== undefined ? zScore(volLatest, volHist) : null,
     fundingPct: null,
     fundingZ: null,
@@ -226,7 +231,7 @@ export class MarketFeed {
           const isTrend = trendIds.includes(id);
           const [c15, c1h, c4h, funding, fHist] = await Promise.all([
             this.api.candles(id, "15m", 200),
-            this.api.candles(id, "1H", 200),
+            this.api.candles(id, "1H", Math.max(200,3*(this.opts.trendBreakoutOptions?.slowHours ?? 50)+2)),
             isTrend ? this.api.candles(id, "4H", 400) : Promise.resolve(null),
             this.api.funding(id).catch(() => null),
             this.fundingHistory(id, now),
@@ -238,9 +243,10 @@ export class MarketFeed {
           const s = computeStats(
             inst,
             tickers.get(id)!,
-            c15.filter((c) => c.confirmed),
-            c1h.filter((c) => c.confirmed),
+            c15.filter((c) => c.confirmed && c.ts + 15*60000 <= now),
+            c1h.filter((c) => c.confirmed && c.ts + HOUR <= now),
           );
+          s.trendBreakout = trendBreakoutSignal(c15,c1h,now,this.opts.trendBreakoutOptions);
           s.refreshedAt = now;
           if (funding && Number.isFinite(funding.rate)) {
             s.fundingPct = funding.rate * 100;
@@ -249,7 +255,12 @@ export class MarketFeed {
           s.oiUsd = oi.get(id) ?? null;
           s.oiChg1hPct = this.oiChange1h(id, now);
           s.breakout = breakoutLevels(c1h, now, BREAKOUT_K);
-          if (c4h) s.trend = trendStats(c4h.filter(c => c.confirmed && c.ts + 4 * HOUR <= now));
+          if (c4h) {
+            const bars = c4h.filter(c => c.confirmed && c.ts + 4 * HOUR <= now);
+            s.trend = trendStats(bars);
+            const latest = bars.at(-1);
+            if (latest) s.confirmed4h = {close:latest.c,ts:latest.ts};
+          }
           next.set(id, s);
           this.dataErrors.delete(id);
         } catch (err) {
@@ -301,8 +312,9 @@ export class MarketFeed {
     const h = this.oiHistory.get(id);
     if (!h || h.length < 2) return null;
     const cur = h[h.length - 1]![1];
-    // oldest sample at least 55 min old, closest to 60 min
-    const past = h.find(([t]) => t <= now - 55 * 60_000);
+    // Nearest one-hour sample, allowing five minutes of refresh jitter.
+    const past = h.filter(([t])=>t >= now - 65*60000 && t <= now - 55*60000)
+      .sort((a,b)=>Math.abs(a[0]-(now-HOUR))-Math.abs(b[0]-(now-HOUR)))[0];
     return past ? pctChange(past[1], cur) : null;
   }
 

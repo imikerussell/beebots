@@ -99,12 +99,14 @@ describe("ledger", () => {
     const b = {
       ...freshBee("tiger", 333, NOW),
       tradesToday: 6,
+      entryLimitBaseline: 3,
       feesTodayUsd: 1.5,
       cap: "trade_cap" as const,
     };
     expect(rollDay(b, NOW)).toBe(false);
     expect(rollDay(b, NOW + 86_400_000)).toBe(true);
     expect(b).toMatchObject({ tradesToday: 0, feesTodayUsd: 0, cap: null });
+    expect(b.entryLimitBaseline).toBeUndefined();
     const r = { ...freshBee("tiger", 333, NOW), cap: "retired" as const };
     rollDay(r, NOW + 86_400_000);
     expect(r.cap).toBe("retired");

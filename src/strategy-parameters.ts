@@ -15,7 +15,8 @@ export type ParameterValues = Partial<Record<StrategyParameter, number>>;
 export function strategyParameters(cfg: Config, cat: BeeId): ParameterValues {
   const { minConviction, minActionProbability } = cfg.cats[cat];
   return cat === "tiger" ? { minConviction, minActionProbability,
-    minMomentumPct: cfg.strategies.tiger.minMomentumPct, momentumAtrMult: cfg.strategies.tiger.momentumAtrMult }
+    ...(cfg.strategies.tiger.signalMode === "trend_breakout" ? {} : {
+      minMomentumPct: cfg.strategies.tiger.minMomentumPct, momentumAtrMult: cfg.strategies.tiger.momentumAtrMult }) }
     : { minConviction, minActionProbability, minTrendScore: cfg.strategies.mochi.minTrendScore,
       volTargetPct: cfg.strategies.mochi.volTargetPct, trimScoreDrop: cfg.strategies.mochi.trimScoreDrop };
 }

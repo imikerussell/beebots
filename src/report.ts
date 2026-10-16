@@ -1,6 +1,7 @@
 import { BEES } from "./config.js";
 import type { Db } from "./db.js";
 import type { CatfolioEngine as Engine } from "./catfolio-engine.js";
+import { tradePerformance } from "./performance.js";
 const percentile = (values: number[], p: number): number | null =>
   values.length ? values[Math.max(0, Math.ceil(values.length * p) - 1)]! : null;
 export function morningReport(
@@ -53,6 +54,7 @@ export function morningReport(
       timeExposedHours: (current?.exposedMs ?? stored.exposedMs) / 3600000,
       ...counts,
       ...orders,
+      performance: tradePerformance(db, id),
       inferenceLatencyMs: {
         samples: latency.length,
         median: percentile(latency, 0.5),

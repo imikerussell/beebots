@@ -1,5 +1,24 @@
 import type { CoinStats } from "../market/types.js";
-import type { BeeContext, Position, Side } from "./types.js";
+import type { BeeContext, BeeState, Position, Side } from "./types.js";
+
+/** Keep actual daily entries intact while an owner can renew the entry allowance. */
+export const entriesUsed = (bee: BeeState): number => Math.max(0, bee.tradesToday - (bee.entryLimitBaseline ?? 0));
+
+export const roundTripCostPct = (s: CoinStats, ctx: BeeContext): number =>
+  200 * ctx.cfg.risk.takerFeeRate + (s.spreadBp + 2*ctx.cfg.paperSlippageBps)/100;
+
+export function currentSignalBar(s: CoinStats, ctx: BeeContext, minutes: 15 | 240): boolean {
+  const period = minutes*60000, candle = minutes === 15 ? s.confirmed15m : s.confirmed4h;
+  const age = ctx.now - (s.refreshedAt ?? ctx.view.ts);
+  return !!candle && Number.isFinite(candle.close) && candle.close > 0 &&
+    candle.ts === Math.floor(ctx.now/period)*period-period && age >= 0 && age <= 3*ctx.cfg.dataRefreshMs;
+}
+/** One canonical bar key; late coins are excluded until the next bar, never a second model draw. */
+export function decisionBarKey(ctx: BeeContext, minutes: 15 | 240): string | null {
+  const relevant = [...ctx.view.stats.values()].filter(s => ctx.bee.position ? s.instId === ctx.bee.position.instId
+    : ctx.cfg.slots[ctx.bee.id].coins.includes(s.coin) && ctx.view.gated.includes(s.instId));
+  return relevant.some(s => currentSignalBar(s,ctx,minutes)) ? `${minutes}:${Math.floor(ctx.now/(minutes*60000))-1}` : null;
+}
 
 export const r2 = (x: number | null | undefined, d = 2): number | null => (x === null || x === undefined || !Number.isFinite(x) ? null : Number(x.toFixed(d)));
 
@@ -64,7 +83,7 @@ export function beeLine(ctx: BeeContext): Record<string, number | string | null>
         held_min: r2(minutesSince(p.openedAt, now), 0),
       }
     : { pos: "flat", flat_min: r2(minutesSince(bee.flatSince, now), 0) };
-  line.trades = `${bee.tradesToday}/${knobs.maxTradesPerDay}`;
+  line.trades = `${entriesUsed(bee)}/${knobs.maxTradesPerDay}`;
   line.fee_left = r2(knobs.feeBudgetUsdDay - bee.feesTodayUsd);
   return line;
 }

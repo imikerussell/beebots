@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { CoachConflict, type CatCoach } from "./coach.js";
+import { EngineControlConflict } from "./engine.js";
+import type { BeeId } from "./config.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Db } from "./db.js";
 import type { EventBus } from "./events.js";
@@ -18,6 +20,7 @@ export interface ServerDeps {
     report?: () => unknown;
     coach?: CatCoach;
     coachAdminToken?: string;
+    resetEntryLimit?: (cat: BeeId) => unknown;
   };
   profile: () => unknown;
 }
@@ -54,9 +57,9 @@ export function startServer(
   const equityCache = new Map<number, { at: number; data: ReturnType<Db["equitySeries"]> }>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname.startsWith("/coach")) {
-      void coachRequest(req, res, url.pathname, deps.engine).catch(() => {
-        if (!res.headersSent) json(res, 500, { error: "Coach request failed." });
+    if (url.pathname.startsWith("/coach") || url.pathname.startsWith("/controls/")) {
+      void ownerRequest(req, res, url.pathname, deps.engine).catch(() => {
+        if (!res.headersSent) json(res, 500, { error: "Owner request failed." });
       });
       return;
     }
@@ -192,9 +195,10 @@ export function startServer(
   return server;
 }
 
-async function coachRequest(req: IncomingMessage, res: ServerResponse, path: string, engine: ServerDeps["engine"]) {
-  if (!engine?.coach) return json(res, 503, { error: "Coach unavailable." });
-  if (req.method === "GET" && path === "/coach") return json(res, 200, engine.coach.state());
+async function ownerRequest(req: IncomingMessage, res: ServerResponse, path: string, engine: ServerDeps["engine"]) {
+  if (!engine) return json(res, 503, { error: "Engine unavailable." });
+  if (path.startsWith("/coach") && !engine.coach) return json(res, 503, { error: "Coach unavailable." });
+  if (req.method === "GET" && path === "/coach") return json(res, 200, engine.coach!.state());
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed." });
   const expected = engine.coachAdminToken;
   if (!expected) return json(res, 503, { error: "Set COACH_ADMIN_TOKEN on the engine to enable owner controls." });
@@ -217,13 +221,17 @@ async function coachRequest(req: IncomingMessage, res: ServerResponse, path: str
     return json(res, 200, { ok: true });
   if (!body || typeof body !== "object" || Object.keys(body).length !== 1) return json(res, 400, { error: "Invalid request." });
   try {
+    if (path === "/controls/reset-entry-limit" && "cat" in body && (body.cat === "tiger" || body.cat === "mochi")) {
+      if (!engine.resetEntryLimit) return json(res, 503, { error: "Entry reset unavailable." });
+      return json(res, 200, engine.resetEntryLimit(body.cat));
+    }
     if (path === "/coach/reset" && "cat" in body && (body.cat === "tiger" || body.cat === "mochi"))
-      return json(res, 200, engine.coach.reset(body.cat));
+      return json(res, 200, engine.coach!.reset(body.cat));
     if ((path === "/coach/accept" || path === "/coach/decline") && "id" in body && typeof body.id === "number" && Number.isSafeInteger(body.id) && body.id > 0)
-      return json(res, 200, engine.coach.resolve(body.id, path === "/coach/accept" ? "accept" : "decline"));
+      return json(res, 200, engine.coach!.resolve(body.id, path === "/coach/accept" ? "accept" : "decline"));
     return json(res, 400, { error: "Invalid review action." });
   } catch (err) {
-    if (err instanceof CoachConflict) return json(res, 409, { error: err.message });
+    if (err instanceof CoachConflict || err instanceof EngineControlConflict) return json(res, 409, { error: err.message });
     throw err;
   }
 }

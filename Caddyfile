@@ -1,7 +1,7 @@
 :8080 {
   encode zstd gzip
   @api {
-    path /events /snapshot /history /equity /visit /health /live /profile /report /coach /coach/*
+    path /events /snapshot /history /equity /visit /health /live /profile /report /coach /coach/* /controls/*
   }
   handle @api {
     reverse_proxy engine:8080 {

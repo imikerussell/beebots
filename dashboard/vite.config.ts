@@ -19,6 +19,7 @@ export default defineConfig({
         "/profile",
         "/report",
         "/coach",
+        "/controls",
       ].map((p) => [p, { target: engine, changeOrigin: false }]),
     ),
   },

@@ -1,27 +1,25 @@
-# Dark Wall-E: active intraday long/short momentum
+# Dark Wall-E: completed-bar long/short strategies
 
-This replaces the one-shot daily Bizzy breakout as of strategy version `catfolio-7-configurable-strategies`. Good Wall-E also uses the configurable adaptation documented in [CATFOLIO](CATFOLIO.md).
+Current version: `catfolio-8-bar-driven-strategies`. These are experimental paper strategies, not demonstrated profitable systems. See the [measured audit](../docs/STRATEGY_REVIEW_2026-10-16.md) and [retrospective comparison](../docs/STRATEGY_BACKTEST_2026-10-16.md).
 
 ## Entry opportunities
 
-Scan BTC, ETH, SOL, HYPE, XRP, DOGE, ADA, LINK, AVAX, SUI, LTC and BCH. A trainer overlay may narrow this list. Require current indicators, an eligible exchange market, at least the configured volume ($1M/day by default), spread within 5 bps, and a valid positive ATR stop distance.
+The owner universe contains BTC, ETH, SOL, HYPE, XRP, DOGE, ADA, LINK, AVAX, SUI, LTC and BCH. Require current confirmed candles, an eligible exchange market, configured liquidity/spread limits and a valid ATR stop. Entry stop distance must be at least `TIGER_MIN_STOP_COST_RATIO` (default 3) times estimated round-trip fees, spread and adverse slippage. Reject prices more than `TIGER_MAX_ENTRY_CHASE_ATR` (default 0.5) ATR beyond the confirming close in the trade direction. Neither filter estimates future profit.
 
-Use one-hour return and MACD calculated from completed 15-minute candles. The minimum move is max(`TIGER_MIN_MOMENTUM_PCT`, `TIGER_MOMENTUM_ATR_MULT` × ATR%) (defaults 0.1% and 0.25). Offer LONG when the return meets the positive threshold and MACD is nonnegative; offer SHORT when it meets the negative threshold and MACD is nonpositive. Rank candidates by absolute return / ATR, and present every qualifying allowed coin. Daily breakout levels are not required.
+`TIGER_SIGNAL_MODE` selects:
 
-The model sees momentum, MACD, threshold, ATR, RSI, 24-hour return, funding z-score, one-hour open-interest change, volume z-score and spread. It selects an offered trade or WAIT. The effective `TIGER_MIN_CONVICTION` and `TIGER_MIN_ACTION_PROBABILITY` apply. Conviction is a continuous expected score from 0 to 3. There is no forced entry. The ordinary model budget and failure controls remain active.
+- `momentum` (default): absolute one-hour return >= max(`TIGER_MIN_MOMENTUM_PCT`, `TIGER_MOMENTUM_ATR_MULT` × 15-minute ATR%), with matching MACD direction. Defaults are 0.1% and 0.25.
+- `trend_momentum`: the same momentum signal, aligned with hourly close and EMA20/EMA50 (configurable).
+- `trend_breakout`: completed 15-minute close above/below the prior 20-bar high/low, aligned with the hourly EMA regime. The confirming bar is excluded from its own channel. Current price must remain outside the breakout boundary. This mode does not use the momentum gates.
 
-## Position management and limits
+Rank qualifying markets by absolute one-hour return / ATR. Offer the top `TIGER_MAX_ENTRY_CANDIDATES` (default 1) against WAIT. The model sees momentum, MACD, ATR, RSI, return, funding/OI/volume statistics, regime and estimated execution costs. Its selected-action probability and continuous 0–3 conviction must satisfy the configured thresholds. Neither value is a calibrated probability of trading profit. Fewer menu options change the probability distribution, so old threshold outcomes are not directly comparable.
 
-- One position at a time, with the notional/leverage cap, margin headroom and configured stop-loss risk budget including estimated execution costs.
-- Default 12 new positions per UTC day and five minutes between discretionary openings, including reversals.
-- Default $3 daily fee budget and unchanged 8% daily loss stop.
-- Initial long stop below entry and short stop above entry, at `TIGER_STOP_ATR_MULT` × 15-minute ATR (default 1.5).
-- After +1R, trail by the same ATR distance; the engine only ratchets a stop in the position's favor.
-- The model may HOLD or CLOSE at a profit or loss. FLIP_LONG/FLIP_SHORT is offered when the held coin develops a qualified opposite signal. The engine must complete the close before opening the reversal, and the reversal counts as a new entry.
-- Code closes at `TIGER_MAX_HOLD_MINUTES` (default 120), including when the model is unavailable or the cat has hit its entry/fee cap. Stops and daily loss exits remain deterministic. A capped cat uses the source engine's protective management path until UTC rollover.
+## Decision cadence and exits
 
-The engine still runs serialized ten-second ticks. A pending inference request can delay the next protective check. Existing environment values override defaults, and market conditions, fees, model choice or protective limits can keep actual trading below the maximum.
+One decision attempt per current completed 15-minute bar, persisted before inference. Provider errors, vetoes, fills, stops and restarts do not grant another attempt on that bar. A late market is omitted until the next bar; owner/configuration changes create a new revision. When only HOLD is possible, code handles it without a model call.
 
-## Upgrade
+The model cannot close an otherwise continuing signal or immediately flip it. Momentum modes exit when both one-hour return and MACD oppose the position. Breakout mode exits beyond the prior `TIGER_EXIT_BARS` (default 10) opposite channel or on an opposite hourly regime. Stops and time/loss limits take precedence.
 
-Preserve the ledger and existing positions. Retire Dark's old coach overlay, migrate the shipped daily-breakout rules, and let the trainer review the new strategy's actual observables and moves. Both pre-version-7 coach overlays retire while history is preserved. Historical daily-breakout records remain readable. Existing position stops are not reset; active trailing and time-exit rules apply after restart.
+Initial stop: `TIGER_STOP_ATR_MULT` × 15-minute ATR (default 1.5). After +1R, the ATR trail can only tighten. Maximum hold: `TIGER_MAX_HOLD_MINUTES` (default 120). Current capital, stop-risk, exposure, daily fee/entry/loss and cooldown limits apply. No forced entry or risk-budget increase is introduced.
+
+Protection and marking still use the serialized engine tick, normally ten seconds. Outstanding inference may delay the next tick. Existing positions are preserved on upgrade and then follow the new deterministic exits; stops are not reset. Old trainer overlays retire, and the trainer is advisory unless `COACH_AUTO_APPLY=true` is explicitly configured.

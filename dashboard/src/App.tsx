@@ -17,6 +17,7 @@ export function App() {
     connected,
     streamStatus,
     historyStatus,
+    refresh,
   } = useFeed();
   const [report, setReport] = useState<Report | string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -126,6 +127,8 @@ export function App() {
               meta={profile?.cats.find((c) => c.id === id)}
               curve={curves[id]}
               snap={snap}
+              connected={connected}
+              onReset={refresh}
 
             />
           ))}

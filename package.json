@@ -33,6 +33,9 @@
     "local:check": "tsx --env-file-if-exists=.env src/tools/local-check.ts",
     "report": "tsx --env-file-if-exists=.env src/tools/report.ts",
     "replay": "tsx --env-file-if-exists=.env src/tools/replay.ts",
+    "research:fetch": "tsx src/research/fetch-history.ts",
+    "research:funding": "tsx src/research/fetch-funding.ts",
+    "research:compare": "tsx src/research/compare.ts",
     "paper:stop": "tsx --env-file-if-exists=.env src/tools/paper-stop.ts",
     "test:integration": "vitest run test/local-integration.test.ts test/engine.test.ts test/jev.test.ts",
     "provider:check": "tsx --env-file-if-exists=.env src/tools/provider-check.ts"

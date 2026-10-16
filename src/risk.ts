@@ -1,7 +1,7 @@
 // The deterministic risk layer (hard rule 2: Jev chooses, code decides).
 // Pure: no I/O, no clock, no randomness. Every veto, shrink and force says why.
 
-import { maxNotionalUsd, minutesSince, positionNotional } from "./bees/common.js";
+import { entriesUsed, maxNotionalUsd, minutesSince, positionNotional } from "./bees/common.js";
 import type { Action, BeeBrain, BeeContext, CapReason, Intent } from "./bees/types.js";
 
 export type { Action } from "./bees/types.js";
@@ -62,7 +62,7 @@ export function evaluateCaps(ctx: BeeContext): { cap: CapReason | null; tripped:
   if (cap === "loss_stop") return { cap, tripped: null };
   if (bee.equityUsd <= bee.dayStartEquityUsd * (1 - cfg.risk.dailyLossStopPct / 100)) return { cap: "loss_stop", tripped: set("loss_stop") };
   if (cap) return { cap, tripped: null };
-  if (bee.tradesToday >= knobs.maxTradesPerDay) return { cap: "trade_cap", tripped: set("trade_cap") };
+  if (entriesUsed(bee) >= knobs.maxTradesPerDay) return { cap: "trade_cap", tripped: set("trade_cap") };
   if (bee.feesTodayUsd >= knobs.feeBudgetUsdDay) return { cap: "fee_budget", tripped: set("fee_budget") };
   return { cap: null, tripped: null };
 }

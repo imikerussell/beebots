@@ -41,9 +41,13 @@ export interface BeeState {
   /** When the bee last became flat (ms), or null while positioned. */
   flatSince: number | null;
   tradesToday: number;
+  /** Actual entry count at the owner's latest limit reset this UTC day. */
+  entryLimitBaseline?: number;
   feesTodayUsd: number;
   lastOrderAt: number | null;
   lastEntryAt: number | null;
+  /** Last consumed strategy/configuration + completed-signal-bar key, persisted across restarts. */
+  strategyDecisionKey?: string;
   peakEquityUsd: number;
   maxDrawdownPct: number;
   exposedMs: number;
@@ -118,6 +122,8 @@ export interface BeeBrain {
   /** instIds this bee may open right now (already gated). */
   universe(ctx: BeeContext): string[];
   menu(ctx: BeeContext): Menu;
+  /** Optional discretionary cadence: one decision per completed signal key; null means protection only. */
+  decisionKey?(ctx: BeeContext): string | null;
   /** Per-coin numbers for this bee's snapshot. */
   coinSnapshot(
     s: CoinStats,

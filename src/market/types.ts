@@ -1,4 +1,5 @@
 import type { Kind } from "./kinds.js";
+import type { TrendBreakoutSignal } from "./strategy-signals.js";
 
 export interface Instrument {
   instId: string;
@@ -52,6 +53,8 @@ export interface CoinStats {
   vol24hUsd: number;
   /** Last completed 15m close and its opening timestamp. */
   confirmed15m?: { close: number; ts: number };
+  confirmed4h?: { close: number; ts: number };
+  trendBreakout?: TrendBreakoutSignal | null;
   // 15m bars
   rsi14: number | null;
   pctB: number | null;

@@ -19,6 +19,7 @@ const price = (value?: number | null) =>
 const statusLabel = (entry: CoachEntry) =>
   ({
     accepted: "Strategy updated",
+    advisory: "Suggestion only",
     no_change: "Kept the strategy",
     reviewing: "Review in progress",
     failed: "Review failed",
@@ -138,7 +139,7 @@ export function TrainerPanel({
             {state?.automatic
               ? `Every ${(state.reviewIntervalMs ?? 14400000) / 3600000} h`
               : "Automatic"}{" "}
-            · {rewrites} {rewrites === 1 ? "update" : "updates"}
+            · {state?.autoApply === true ? "Automatic experiments" : state?.autoApply === false ? "Suggestions only" : "Policy unavailable"} · {rewrites} {rewrites === 1 ? "update" : "updates"}
           </p>
         </div>
         <div className="trainer-next">
@@ -158,6 +159,9 @@ export function TrainerPanel({
       )}
       {state && !state.enabled && (
         <p className="trainer-caution">{state.message}</p>
+      )}
+      {state?.enabled && state.autoApply === false && (
+        <p className="trainer-caution">Suggestions are recorded for review. Your strategy settings stay unchanged.</p>
       )}
       {latest ? (
         <button
@@ -186,7 +190,7 @@ export function TrainerPanel({
         <div className="trainer-empty">
           <strong>Getting to know the cats.</strong>
           <p>
-            Gathering an hour and 30 observations.
+            Gathering 30 signal-bar observations. Good needs about five days at its four-hour cadence.
           </p>
         </div>
       )}
@@ -237,7 +241,7 @@ export function TrainerPanel({
           <section className="trainer-review-detail">
             <p className="muted">
               {new Date(detail.createdAt).toLocaleString()} · {detail.model} ·
-              Last 24 hours at review time
+              Up to 7 days of evidence at review time
             </p>
             {detailedReview ? (
               <>
@@ -245,6 +249,7 @@ export function TrainerPanel({
                 <blockquote>“{detailedReview.quip}”</blockquote>
                 <p>{detailedReview.reason}</p>
                 <p>{detailedReview.note}</p>
+                {detail.status === "advisory" && <p className="trainer-caution">Suggestion only. These rules, coins and parameter changes have not been applied.</p>}
                 {!!detailedReview.parameterChanges?.length && <ul>{detailedReview.parameterChanges.map(change =>
                   <li key={change.field}>{change.field}: {change.from} → {change.to}</li>)}</ul>}
                 <h4>Reviewed rules</h4>
@@ -325,7 +330,7 @@ export function TrainerPanel({
               </p>
             )}
             <p>
-              {cat.phase} · {cat.observations} observations in the last 24 h ·{" "}
+              {cat.phase} · {cat.observations} signal-bar observations in the last 7 days ·{" "}
               {cat.observedMinutes} observed minutes
             </p>
             <Diagnostics diagnostics={cat.context?.diagnostics ?? []} />
