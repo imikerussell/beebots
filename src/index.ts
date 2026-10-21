@@ -1,4 +1,5 @@
 import { strategyFacts } from "./cats.js";
+import { strategyVersion } from "./decision.js";
 import { existsSync } from "node:fs";
 import { Alerts } from "./alerts.js";
 import { BEES, loadConfig } from "./config.js";
@@ -103,11 +104,13 @@ async function main() {
       },
       profile: () => ({
         product: "Catfolio",
+        strategyVersion: strategyVersion(cfg),
         cats: BEES.map((id) => ({
           id,
           ...cfg.slots[id],
           img: `/cats/wall-e-${id === "tiger" ? "dark" : "good"}.png`,
           limits: cfg.cats[id],
+          exits: cfg.exits[id],
           strategyFacts: strategyFacts(id, cfg),
         })),
       }),
@@ -120,7 +123,7 @@ async function main() {
     provider: cfg.decisionProvider,
     model: decisionConfiguration(cfg).model || "not configured",
     decisionsMs: cfg.tickMs,
-    protectiveMs: cfg.tickMs,
+    protectiveMs: Math.min(cfg.tickMs, 2000),
   });
   let stopping = false;
   // Docker's restart policy does not restart an unhealthy but still running

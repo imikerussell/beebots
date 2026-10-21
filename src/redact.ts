@@ -15,6 +15,8 @@ function isSensitiveKey(k: string): boolean {
 const MASK = "[redacted]";
 
 const PATTERNS: Array<[RegExp, string]> = [
+  [/AIza[A-Za-z0-9_-]{20,}/g, "[redacted]"],
+  [/(x-goog-api-key["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, "$1[redacted]"],
   // Authorization headers and bearer tokens
   [/\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 " + MASK],
   // OK-ACCESS-* headers written inline

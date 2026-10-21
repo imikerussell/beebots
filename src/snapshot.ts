@@ -1,6 +1,7 @@
 // Per-bee numeric snapshot for Jev. Numbers only, columnar, target < 400 input tokens.
 import { createHash } from "node:crypto";
-import { beeLine } from "./bees/common.js";
+import { beeLine, r2 } from "./bees/common.js";
+import { profitMetrics } from "./bees/profit-management.js";
 import type { BeeBrain, BeeContext } from "./bees/types.js";
 
 export interface Snapshot {
@@ -27,6 +28,15 @@ export function buildSnapshot(brain: BeeBrain, ctx: BeeContext): Snapshot {
     utc: `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`,
     me: beeLine(ctx),
     coins: { cols, rows },
+  };
+  const profit = brain.profitProtection && ctx.bee.position ? profitMetrics(ctx) : null;
+  if (profit) state.profit = {
+    net_usd: r2(profit.netPnlUsd, 4), net_r: r2(profit.netR, 3),
+    peak_net_usd: r2(profit.peakNetPnlUsd, 4), peak_net_r: r2(profit.peakNetR, 3),
+    giveback_pct: r2(profit.givebackPct, 1), breakeven_px: profit.breakevenPx,
+    partial_done: ctx.bee.position!.profitTaken ? 1 : 0,
+    cost_basis_estimated: profit.costBasisEstimated ? 1 : 0,
+    exit_min_p: ctx.cfg.exits[ctx.bee.id].minActionProbability,
   };
   if (brain.id === "boozy") state.attn = ctx.view.newsAvailable ? "news_z" : "volume_z";
   const json = JSON.stringify(state);

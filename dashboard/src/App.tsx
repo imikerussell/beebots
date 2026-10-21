@@ -134,6 +134,7 @@ export function App() {
           ))}
         </section>
         <aside className="sidebar">
+          <EngineStatus snap={snap} connected={connected && streamStatus === "live"} decisions={decisions} />
           <TrainerPanel state={snap?.coach} connected={connected} names={{ tiger: nameFor("tiger"), mochi: nameFor("mochi") }} />
           <DecisionStream
             liveDecisionKeys={liveDecisionKeys}
@@ -144,7 +145,6 @@ export function App() {
             intervalMs={snap?.decisionIntervalMs}
             closed={!!snap?.closed}
           />
-          <EngineStatus snap={snap} connected={connected} />
         </aside>
       </div>
       {report !== null && (

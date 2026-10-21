@@ -1,0 +1,12 @@
+{
+  "_about": "Gemini 4 Argon's rules (since 2026-10-13): the knobs its strategy rewrite sets. Compared by src/tools/effective-config.ts --diff; keys starting with _ are ignored, and anything absent is not compared.",
+  "bees": {
+    "bizzy": { "maxTradesPerDay": 4, "feeBudgetUsdDay": 1.2, "spreadGateBps": 5, "cooldownMinutes": 30, "stopAtrMult": 2, "maxFlatMinutes": 1440 },
+    "breezy": { "maxTradesPerDay": 2, "feeBudgetUsdDay": 0.75, "spreadGateBps": 5, "cooldownMinutes": 240, "stopAtrMult": 2, "maxFlatMinutes": 1440 },
+    "boozy": { "maxTradesPerDay": 3, "feeBudgetUsdDay": 1.5, "spreadGateBps": 8, "cooldownMinutes": 60, "stopAtrMult": 2.5, "maxFlatMinutes": 1440 }
+  },
+  "risk": { "maxLeverage": 2, "maxNotionalUsdPerBee": 700, "dailyLossStopPct": 8, "retireAtPct": 40, "maxFlatMinutes": 1440 },
+  "breezy": { "minOpenProb": 0.55 },
+  "bizzy": { "sizeFraction": 0.5, "universeSize": 8, "timeStopMinutes": 240 },
+  "chooser": { "provider": "gemini", "model": "gemini-4-argon", "dailyUsdCap": 3, "usdPerMTokIn": 4, "usdPerMTokOut": 20, "minIntervalMs": 60000, "apiKeyPresent": true }
+}

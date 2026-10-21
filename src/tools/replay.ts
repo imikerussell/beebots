@@ -41,7 +41,7 @@ try {
         "Replay model differs from recorded model. Select the original identifier/configuration first.",
       );
     const budgetDb =
-      cfg.decisionProvider === "jev" ? new Db(cfg.dbPath) : undefined;
+      cfg.decisionProvider !== "lmstudio" ? new Db(cfg.dbPath) : undefined;
     const provider = createDecisionProvider(cfg, budgetDb);
     const result = await provider.decide({
       strategy: audit.strategy,

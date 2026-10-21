@@ -18,6 +18,7 @@ RUN mkdir -p /home/node/.okx /data && chown -R node:node /home/node /data
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
+COPY --chown=node:node strategies ./strategies
 COPY --chown=node:node scripts/okx-profiles.sh ./scripts/okx-profiles.sh
 USER node
 ENV HOME=/home/node

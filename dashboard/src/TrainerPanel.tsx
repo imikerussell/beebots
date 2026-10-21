@@ -127,8 +127,19 @@ export function TrainerPanel({
     setFocusedCat(cat ?? null);
     dialog.current?.showModal();
   };
+  const benched = state?.benched === true || state?.enabled === false;
   return (
-    <section className="trainer-panel" aria-label="Automatic strategy trainer">
+    <section className={`trainer-panel${benched ? " trainer-benched" : ""}`} aria-label="Strategy trainer">
+      {benched ? (
+        <div className="trainer-bench-indicator">
+          <span className="trainer-emblem" aria-hidden="true">T</span>
+          <div role="status">
+            <strong>TRAINER <span>BENCHED{!connected ? " · last reported" : ""}</span></strong>
+            <p>{!connected ? "Waiting for a current status." : "No reviews or strategy changes at the moment."}</p>
+          </div>
+          <button className="trainer-bench-history" onClick={() => open()} aria-label="View trainer history and details">{entries.length ? "History" : "Details"} ↗</button>
+        </div>
+      ) : <>
       <header className="trainer-panel-heading">
         <span className="trainer-emblem" aria-hidden="true">
           T
@@ -211,6 +222,7 @@ export function TrainerPanel({
           <span aria-hidden="true">↗</span>
         </button>;
       })}
+      </>}
 
       <dialog
         ref={dialog}
@@ -237,6 +249,7 @@ export function TrainerPanel({
             ×
           </button>
         </header>
+        {benched && <p className="trainer-caution">{connected ? state?.message : "Last reported trainer status: benched. Waiting for the engine to reconnect."}</p>}
         {detail && (
           <section className="trainer-review-detail">
             <p className="muted">

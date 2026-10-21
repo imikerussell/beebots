@@ -1632,3 +1632,52 @@ dialog details {
   .decision { margin: 8px 0; }
   .metrics { row-gap: 8px; }
 }
+
+/* Live decision hub, adapted to the two-cat Catfolio desk. */
+.engine-status:has(.brain-panel) { padding: 12px; overflow: hidden; background: linear-gradient(145deg, #1d2031, var(--card) 72%); border-color: #9279c734; }
+.brain-panel { width: 100%; min-width: 0; }
+.brain-panel-top, .brain-panel-bottom { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.brain-provider { display: inline-flex; align-items: center; gap: 5px; color: #c4bcf4; font-size: 10px; font-weight: 650; letter-spacing: .1px; }
+.brain-provider > span { font-size: 17px; color: #9fc7ff; }
+.brain-cycle { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.brain-network { position: relative; display: flex; align-items: center; height: 112px; }
+.brain-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.brain-links path { fill: none; stroke-width: 1; opacity: .22; }
+.brain-links .brain-signal { opacity: 0; stroke-width: 2; stroke-dasharray: 8 75; }
+.signal-live .brain-signal { opacity: .95; animation: brain-transmit 1.3s linear infinite; }
+.brain-hub { position: relative; display: grid; place-content: center; text-align: center; flex: 0 0 42px; height: 42px; margin-left: 10px; border: 1px solid #bcb0fa5c; border-radius: 50%; background: radial-gradient(circle, #7e6dc333, #141725); box-shadow: 0 0 16px #9777ec20; }
+.brain-hub > span { color: #b8ccff; font-size: 27px; line-height: 25px; }
+.brain-hub > small { font-size: 6px; letter-spacing: 1px; color: #bfb3ed; }
+.brain-active .brain-hub { animation: brain-breathe 1.6s ease-in-out infinite; }
+.brain-cats { position: relative; margin-left: 40px; min-width: 0; flex: 1; display: grid; gap: 8px; }
+.brain-cat { display: flex; align-items: center; gap: 7px; padding: 7px; min-width: 0; border: 1px solid #ffffff0d; background: #ffffff03; border-radius: 7px; }
+.brain-cat-active { border-color: #b6a5ff80; background: #a897ef0b; }
+.brain-cat > img { width: 25px; height: 25px; border-radius: 50%; object-fit: cover; border: 1px solid #b4a0ef4a; }
+.brain-cat.tiger > img { border-color: #e7a65d75; }
+.brain-cat > span { flex: 1; min-width: 0; }
+.brain-cat strong { display: block; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brain-cat small { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.brain-cat small b { font-weight: 500; color: #b4a8db; }
+.brain-cat time { align-self: flex-start; color: var(--muted); font-size: 8px; }
+.brain-panel-bottom { font-size: 8px; color: var(--muted); padding: 2px 0 7px; border-bottom: 1px solid #ffffff09; margin-bottom: 3px; }
+.brain-idle .brain-hub { opacity: .45; }
+@keyframes brain-transmit { to { stroke-dashoffset: -83; } }
+@keyframes brain-breathe { 50% { box-shadow: 0 0 0 5px #a18bd71b, 0 0 25px #9777ec44; } }
+@media (prefers-reduced-motion: reduce) { .brain-panel *, .brain-panel *::before { animation: none !important; } }
+@media (min-width: 1050px) and (max-height: 850px) {
+  .brain-network { height: 84px; }
+  .brain-cat { padding: 5px; }
+  .brain-cat > img { width: 22px; height: 22px; }
+  .sidebar:has(.brain-panel) .trainer-empty { padding: 7px 9px; }
+  .sidebar:has(.brain-panel) .trainer-empty p { display: none; }
+}
+
+.trainer-panel.trainer-benched { padding: 11px 12px; background: var(--card); border-color: var(--line); }
+.trainer-bench-indicator { display: flex; align-items: center; gap: 9px; }
+.trainer-benched .trainer-emblem { color: #a0a2ae; border-color: #8c8e9a4d; background: #8c8e9a0a; }
+.trainer-bench-indicator > div { flex: 1; min-width: 0; }
+.trainer-bench-indicator strong { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; font-size: 10px; letter-spacing: 1px; color: #c4c5ce; }
+.trainer-bench-indicator strong span { color: #a0a2ae; font-size: 8px; letter-spacing: .6px; border: 1px solid #8c8e9a38; border-radius: 4px; padding: 2px 5px; }
+.trainer-bench-indicator p { margin: 4px 0 0; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.trainer-bench-history { padding: 3px 0 3px 5px; border: 0; background: none; color: #a0a2ae; font: inherit; font-size: 9px; flex-shrink: 0; }
+.trainer-bench-history:hover { color: #e1dce9; background: none; }

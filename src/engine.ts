@@ -1,17 +1,18 @@
 import { createHash } from "node:crypto";
 import { customBrain } from "./bees/custom.js";
-import { BRAINS } from "./bees/index.js";
+import { brainsFor } from "./bees/index.js";
 import { entriesUsed, maxNotionalUsd, minutesSince, positionNotional, profitLockStop } from "./bees/common.js";
+import { profitStopCandidate, takeProfitContracts } from "./bees/profit-management.js";
 import { coinOf, type Action, type BeeBrain, type BeeContext, type BeeState, type Position, type Side } from "./bees/types.js";
 import { BEES, type BeeId, type Config } from "./config.js";
-import { STRATEGY_VERSION } from "./decision.js";
+import { strategyVersion } from "./decision.js";
 import { liveRules } from "./lab/brain.js";
 import type { EngineOverlay as Overlay, EngineStore as Db, EngineJev as Jev, EngineAnswer as JevAnswer, EngineResult as JevResult } from "./engine-ports.js";
 import type { Alerts } from "./alerts.js";
 import type { EventBus } from "./events.js";
 import type { Executor } from "./exec/executor.js";
 import { contractsFor, roundToLot } from "./exec/sizing.js";
-import { applyFill, applyFunding, dayKey, freshBee, mark, rollDay, sizedRiskUsd } from "./ledger.js";
+import { applyFill, applyFunding, dayKey, freshBee, fundingForRemainingPosition, mark, rollDay, sizedRiskUsd } from "./ledger.js";
 import { log } from "./log.js";
 import type { MarketFeed } from "./market/data.js";
 import { safeError } from "./redact.js";
@@ -54,6 +55,8 @@ interface LastDecision {
   ts: number;
   /** The rules made the call (one legal move, a hold); Jev was not asked. */
   required?: boolean;
+  decidedBy?: string | null;
+  fallbackReason?: string | null;
 }
 
 /** Move a stop only in the position's favour. */
@@ -64,7 +67,7 @@ function ratchetStop(p: Position, cand: number): void {
 
 /** The answer when the menu leaves one legal hold: no Jev call, no cost. */
 function requiredAnswer(label: string): JevAnswer {
-  return { ok: true, choice: label, probabilities: { [label]: 1 }, confidence: 1, conviction: 0, convictionRaw: 0, inputTokens: 0, costUsd: 0, latencyMs: 0, model: "rules" };
+  return { ok: true, choice: label, probabilities: { [label]: 1 }, confidence: 1, conviction: 0, convictionRaw: 0, inputTokens: 0, costUsd: 0, latencyMs: 0, model: "rules", decidedBy: "rules" };
 }
 
 export class Engine {
@@ -75,6 +78,10 @@ export class Engine {
   private ticking = false;
   private stopped = false;
   private refreshing = false;
+  private executing = new Set<BeeId>();
+  private beeLock: Partial<Record<BeeId, Promise<void>>> = {};
+  private exitEpoch: Partial<Record<BeeId, number>> = {};
+  private watchingExits = false;
   private timers: NodeJS.Timeout[] = [];
   private lastEquityAt = 0;
   private lastReconAt = 0;
@@ -133,6 +140,7 @@ export class Engine {
     this.d.alerts.send(`engine started (MODE=${cfg.mode})`);
 
     this.loop(() => this.tick(), cfg.tickMs);
+    this.loop(() => this.exitWatch(), Math.min(cfg.tickMs, 2000));
     this.loop(() => this.refreshMarket(), cfg.dataRefreshMs);
     this.timers.push(setInterval(() => this.d.bus.emit("heartbeat", {}), 15_000));
     this.timers.push(setInterval(() => this.d.db.pruneEvents(this.now() - 3 * 86_400_000), 3_600_000));
@@ -271,6 +279,14 @@ export class Engine {
       const cand = brain.trail(this.ctx(id, now));
       if (cand !== null && Number.isFinite(cand)) ratchetStop(p, cand);
     }
+    if (p && brain.profitProtection) {
+      const protection = profitStopCandidate(this.ctx(id, now));
+      if (protection) {
+        p.exitPeakPx = protection.peakPx;
+        p.exitPeakNetPerUnit = protection.peakNetPerUnit;
+        if (protection.stopPx !== null) ratchetStop(p, protection.stopPx);
+      }
+    }
     // Profit lock: track the best price since entry; past a rung the stop keeps part of that move.
     if (p && brain.profitLock && t?.mid) {
       const better = p.peakPx == null || (p.side === "long" ? t.mid > p.peakPx : t.mid < p.peakPx);
@@ -284,32 +300,65 @@ export class Engine {
     const { cfg, db, bus, jev } = this.d;
     const brain = this.brain(id);
     const bee = this.bees[id];
-    // Benched (trade cap or fee budget): the bee rides whatever it holds. Jev is not asked, because nothing it
-    // chose could be acted on; only code can close the position (stop, time stop, loss stop) until 00:00 UTC.
-    if (bee.cap === "trade_cap" || bee.cap === "fee_budget") return this.decideBenched(id, now);
+    // Entry caps must not prevent reducing an existing position.
+    if (!bee.position && (bee.cap === "trade_cap" || bee.cap === "fee_budget")) return this.decideBenched(id, now);
+    const epoch = this.exitEpoch[id] ?? 0;
+    if (cfg.strategyEngine === "upstream" && this.deterministicExit(id, now)) return this.decideBenched(id, now);
     const ctx = this.ctx(id, now);
-    if (brain.decisionKey) {
-      const signalKey = brain.decisionKey(ctx);
-      if (signalKey === null) return this.decideBenched(id, now, "waiting for a valid completed signal bar; protection remains active");
-      const revision = createHash("sha256").update(JSON.stringify({
-        version: STRATEGY_VERSION, style: brain.id, strategy: brain.strategy,
-        parameters: cfg.strategies[id], limits: cfg.cats[id],
+    const revision = createHash("sha256").update(JSON.stringify({
+        version: strategyVersion(cfg), style: brain.id, strategy: brain.strategy,
+        parameters: cfg.strategies[id], limits: cfg.cats[id], exits: cfg.exits[id],
         rules: cfg.slots[id].rules, coins: cfg.slots[id].coins,
       })).digest("hex").slice(0, 16);
+    const signalKey = brain.decisionKey?.(ctx) ?? null;
+    const managementKey = brain.managementKey?.(ctx) ?? null;
+    const freshSignal = signalKey !== null && bee.strategyDecisionKey !== `${revision}:${signalKey}`;
+    const profitReview = managementKey !== null && !freshSignal;
+    const profitChoicesConsumed = managementKey !== null && bee.profitDecisionKey === `${revision}:${managementKey}`;
+    if (profitReview) {
+      const key = `${revision}:${managementKey}`;
+      if (bee.profitDecisionKey === key)
+        return this.decideBenched(id, now, "waiting for the next profit review; protection remains active");
+      bee.profitDecisionKey = key;
+      // A profit close must not unlock another entry sample on the same signal bar.
+      if (signalKey !== null) bee.strategyDecisionKey = `${revision}:${signalKey}`;
+      db.saveBee(bee, now);
+    } else if (brain.decisionKey) {
+      if (signalKey === null) return this.decideBenched(id, now, "waiting for a valid completed signal bar; protection remains active");
       const key = `${revision}:${signalKey}`;
       if (bee.strategyDecisionKey === key)
         return this.decideBenched(id, now, "waiting for the next completed signal bar; protection remains active");
       // Consume before inference or execution. An outage, veto, fill or process restart must not
       // repeatedly sample the same signal until a different answer happens to allow a trade.
       bee.strategyDecisionKey = key;
+      if (managementKey !== null && !profitChoicesConsumed) bee.profitDecisionKey = `${revision}:${managementKey}`;
       db.saveBee(bee, now);
     }
-    const menu = brain.menu(ctx);
+    const fullMenu = brain.menu(ctx);
+    // Between signal bars the review can only hold or reduce exposure.
+    const menu = profitReview ? Object.fromEntries(Object.entries(fullMenu).filter(([, option]) =>
+      option.intent.kind === "hold" || option.intent.kind === "close" || option.intent.kind === "trim"))
+      : profitChoicesConsumed ? Object.fromEntries(Object.entries(fullMenu).filter(([label]) => label !== "CLOSE_PROFIT" && label !== "TAKE_PROFIT")) : fullMenu;
     const snap = buildSnapshot(brain, ctx);
     if (brain.id === "boozy" && bee.top1.coin) snap.state.top1 = `${bee.top1.coin} x${bee.top1.streak}`;
 
     let jevStatus: JevStatus = "ok";
     let r: JevResult | null = null;
+    const discard = () => {
+      // A stop may invalidate an answer, but its paid usage and input still belong in the audit.
+      const costUsd = r?.costUsd ?? 0;
+      const decidedBy = r?.ok ? r.decidedBy ?? cfg.decisionProvider : null;
+      const row = {bee:id,ts:this.now(),stateHash:snap.hash,stateJson:JSON.stringify(snap.state),menuJson:JSON.stringify(menu),
+        auditJson:JSON.stringify({decisionKind:"discarded",requestStrategy:brain.strategy}),
+        choice:r?.ok ? r.choice : null,probabilities:r?.ok && decidedBy !== "code" ? r.probabilities : null,
+        confidence:r?.ok && decidedBy !== "code" ? r.confidence : null,conviction:r?.ok && decidedBy !== "code" ? r.convictionRaw : null,
+        latencyMs:r?.latencyMs ?? null,inputTokens:r?.ok ? r.inputTokens : null,jevCostUsd:costUsd,
+        jevError:r && !r.ok ? r.reason : null,decidedBy,fallbackReason:r?.ok ? r.fallbackReason ?? null : null,
+        action:{kind:"none"},vetoedBy:"stale_model_response",forcedBy:null,status:"Answer discarded: position closed or engine stopping"};
+      db.insertDecision(row); bee.totals.jevUsd += costUsd; bee.totals.decisions++; db.saveBee(bee,this.now());
+      bus.emit("decision",{bee:id,choice:row.choice,probabilities:[],confidence:null,latencyMs:row.latencyMs,
+        decidedBy,fallbackReason:row.fallbackReason,jev:"no_options",action:"hold",vetoedBy:row.vetoedBy,forcedBy:null,status:row.status,jevUsd:costUsd},this.now());
+    };
     // One legal move and it is "keep what you hold" (a Momentum bee inside its 24h lock): asking Jev buys nothing, so
     // the rules make the call. Only for a hold: a lone open or close still goes to Jev.
     const labels = Object.keys(menu);
@@ -322,19 +371,32 @@ export class Engine {
     else if (labels.length === 0) jevStatus = "no_options";
     else if (required) r = requiredAnswer(labels[0]!);
     else {
-      r = await jev.decide({ strategy: brain.strategy, state: snap.state, menu, convictionLabels: brain.convictionLabels });
+      r = await jev.decide({ strategy: brain.strategy, state: snap.state, menu, convictionLabels: brain.convictionLabels, key: id });
+      if (this.stopped || (this.exitEpoch[id] ?? 0) !== epoch) { discard(); return; }
       if (!r.ok) jevStatus = r.reason === "daily_cap" ? "daily_cap" : "unreachable";
     }
     const proposal: Proposal | null =
-      r && r.ok ? { label: r.choice, intent: menu[r.choice]!.intent, prob: r.probabilities[r.choice] ?? 0, conviction: r.conviction } : null;
+      r && r.ok && menu[r.choice] ? { label: r.choice, intent: menu[r.choice]!.intent, prob: r.probabilities[r.choice] ?? 0, conviction: r.conviction } : null;
 
+    // Inference can outlive the quote that justified taking profit. Re-mark and give hard stops
+    // priority on the latest available quote before accepting a discretionary reduction.
+    let executionCtx = ctx;
+    if (((brain.profitProtection && bee.position) || cfg.strategyEngine === "upstream") && r && !required) {
+      try { await this.d.feed.refreshTickers(); }
+      catch (err) { log.warn("exit quote refresh failed", { err: safeError(err) }); }
+      const executionNow = this.now();
+      this.markBee(id, executionNow);
+      executionCtx = this.ctx(id, executionNow);
+    }
+
+    if (this.stopped || (this.exitEpoch[id] ?? 0) !== epoch) { discard(); return; }
     const risk = applyRisk({
-      ctx,
+      ctx: executionCtx,
       brain,
       proposal,
       jev: jevStatus,
-      sizeMult: this.sizeMult(now),
-      dataAgeMs: now - this.d.feed.lastRefreshAt,
+      sizeMult: this.sizeMult(executionCtx.now),
+      dataAgeMs: executionCtx.now - this.d.feed.lastRefreshAt,
       maxDataAgeMs: 3 * cfg.dataRefreshMs + 30_000,
     });
 
@@ -347,23 +409,27 @@ export class Engine {
     bee.cap = risk.cap;
     // A rules-only hold that the risk layer left alone (a stop or cap still overrides it and shows as usual).
     const ruled = required && risk.action.kind === "none" && !risk.forcedBy;
-    const status = ruled ? `${labels[0]}: required by rules, Jev not asked` : risk.status;
+    const status = ruled ? `${labels[0]}: required by rules, ${cfg.decisionProvider === "gemini" ? "Argon" : cfg.decisionProvider === "jev" ? "Jev" : "local model"} not asked` : risk.status;
 
     // Hard rule 10: recorded before it is acted on.
-    const costUsd = r && r.ok ? r.costUsd : 0;
+    const costUsd = r?.costUsd ?? 0;
+    const decidedBy = r && r.ok ? r.decidedBy ?? (required ? "rules" : cfg.decisionProvider) : null;
+    const fallbackReason = r && r.ok ? r.fallbackReason ?? null : null;
     const decisionId = db.insertDecision({
       bee: id,
       ts: now,
       stateHash: snap.hash,
       stateJson: JSON.stringify(snap.state),
-      menuJson: JSON.stringify(Object.keys(menu)),
+      menuJson: JSON.stringify(menu),
+      auditJson: JSON.stringify({ decisionKind: profitReview ? "profit_review" : "signal", requestStrategy: brain.strategy }),
       choice: r && r.ok ? r.choice : null,
-      probabilities: r && r.ok ? r.probabilities : null,
-      confidence: r && r.ok ? r.confidence : null,
-      conviction: r && r.ok ? r.convictionRaw : null,
+      probabilities: r && r.ok && decidedBy !== "code" ? r.probabilities : null,
+      confidence: r && r.ok && decidedBy !== "code" ? r.confidence : null,
+      conviction: r && r.ok && decidedBy !== "code" ? r.convictionRaw : null,
       latencyMs: r ? r.latencyMs : null,
       inputTokens: r && r.ok ? r.inputTokens : null,
       jevCostUsd: costUsd,
+      decidedBy, fallbackReason,
       jevError: r && !r.ok ? `${r.reason}${r.error ? `: ${r.error.code} ${r.error.message}` : ""}` : null,
       action: risk.action,
       vetoedBy: risk.vetoedBy,
@@ -373,8 +439,8 @@ export class Engine {
     bee.totals.jevUsd += costUsd;
     bee.totals.decisions++;
 
-    const top3 = r && r.ok ? (Object.entries(r.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3) as Array<[string, number]>) : [];
-    this.last[id] = { choice: r && r.ok ? r.choice : null, top3: ruled ? [] : top3, confidence: r && r.ok && !ruled ? r.confidence : null, latencyMs: ruled ? null : r ? r.latencyMs : null, status, ts: now, ...(ruled ? { required: true } : {}) };
+    const top3 = r && r.ok && decidedBy !== "code" ? (Object.entries(r.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3) as Array<[string, number]>) : [];
+    this.last[id] = { choice: r && r.ok ? r.choice : null, top3: ruled ? [] : top3, confidence: r && r.ok && !ruled && decidedBy !== "code" ? r.confidence : null, latencyMs: ruled ? null : r ? r.latencyMs : null, status, ts: now, decidedBy, fallbackReason, ...(ruled ? { required: true } : {}) };
     // Flat and nothing to ask Jev (bizzy waiting for her breakout): a live "watching" row every PULSE_MS instead of a
     // "no call" row every tick, so the stream shows how close the trigger is.
     const watching = jevStatus === "no_options" && !bee.position && !!brain.idleStatus && risk.action.kind === "none";
@@ -392,10 +458,11 @@ export class Engine {
         ...(watching ? { watch: risk.status } : {}),
         probabilities: ruled ? [] : top3.map(([label, p]) => ({ label, p: Number(p.toFixed(3)) })),
         ...(ruled ? { required: true } : {}),
-        confidence: r && r.ok && !ruled ? Number(r.confidence.toFixed(3)) : null,
+        confidence: r && r.ok && !ruled && decidedBy !== "code" ? Number(r.confidence.toFixed(3)) : null,
         conviction: r && r.ok && !ruled ? brain.convictionLabels[r.conviction] : null,
         latencyMs: ruled ? null : r ? r.latencyMs : null,
         tokens: r && r.ok && !ruled ? r.inputTokens : null,
+        decidedBy, fallbackReason,
         jevUsd: Number(costUsd.toFixed(6)),
         action: describeAction(risk.action),
         vetoedBy: risk.vetoedBy,
@@ -407,7 +474,7 @@ export class Engine {
       now,
     );
 
-    if (risk.action.kind !== "none") await this.execute(id, risk.action, decisionId, ctx, proposal?.conviction ?? 0);
+    if (risk.action.kind !== "none") await this.execute(id, risk.action, decisionId, executionCtx, proposal?.conviction ?? 0, epoch);
     db.saveBee(bee, now);
   }
 
@@ -415,6 +482,7 @@ export class Engine {
 
   private async decideBenched(id: BeeId, now: number, waitingStatus?: string): Promise<void> {
     const { db } = this.d;
+    const epoch = this.exitEpoch[id] ?? 0;
     const bee = this.bees[id];
     const ctx = this.ctx(id, now);
     const brain = this.brain(id);
@@ -448,7 +516,7 @@ export class Engine {
         jevUsd: 0, action: describeAction(risk.action), vetoedBy: null, forcedBy: risk.forcedBy, status: risk.status, jev: "no_options",
         ...this.liveChip(id),
       }, now);
-      await this.execute(id, risk.action, decisionId, ctx, 0);
+      await this.execute(id, risk.action, decisionId, ctx, 0, epoch);
     } else if (now - (this.lastPulseAt[id] ?? 0) >= PULSE_MS) {
       // Keep benched bees in the stream: a live row with the position's P&L ticking, no Jev call behind it.
       this.lastPulseAt[id] = now;
@@ -518,6 +586,7 @@ export class Engine {
 
   private beginClose(now: number) {
     this.closedAt = now;
+    for (const id of BEES) this.exitEpoch[id] = (this.exitEpoch[id] ?? 0) + 1;
     this.d.db.setMeta("experiment_closed_at", String(now));
     log.info("experiment close requested: closing every position, no more Jev calls");
     this.d.bus.emit("status", { event: "experiment_closing" }, now);
@@ -536,7 +605,8 @@ export class Engine {
           conviction: null, latencyMs: null, inputTokens: null, jevCostUsd: 0, jevError: null,
           action: { kind: "close", reason: "experiment_closed" }, vetoedBy: null, forcedBy: "experiment_closed", status: "experiment closed: closing position",
         });
-        const ok = await this.order(id, decisionId, p.instId, p.side === "long" ? "sell" : "buy", p.contracts, true, "experiment_close");
+        await this.execute(id, {kind:"close",reason:"experiment_close"}, decisionId, this.ctx(id,now), 0);
+        const ok = !bee.position;
         if (!ok) this.closeRetryAt[id] = now + 10_000;
         this.d.db.saveBee(bee, now);
       }),
@@ -552,7 +622,90 @@ export class Engine {
 
   // ---------- execution ----------
 
-  private async execute(id: BeeId, action: Action, decisionId: number, ctx: BeeContext, _conviction: number): Promise<void> {
+  /** True when code alone closes this bee's position this tick (stop, time stop, loss stop, retire). Pure. */
+  private deterministicExit(id: BeeId, now: number): boolean {
+    if (!this.bees[id].position) return false;
+    const pre = applyRisk({
+      ctx: this.ctx(id, now),
+      brain: this.brain(id),
+      proposal: null,
+      jev: "no_options",
+      sizeMult: this.sizeMult(now),
+      dataAgeMs: now - this.d.feed.lastRefreshAt,
+      maxDataAgeMs: 3 * this.d.cfg.dataRefreshMs + 30_000,
+    });
+    return pre.action.kind === "close" && pre.forcedBy !== null;
+  }
+
+  /**
+   * The deterministic exit pass, on its own timer and independent of the tick: a tick blocked on ANY bee's chooser call
+   * (the tick waits for all three) never delays ANY bee's stop. Every bee with an open position is covered (choosing,
+   * benched, rules-only hold, or already decided this tick): re-read tickers, re-mark (trail, profit lock), and fire a
+   * stop, time stop, daily loss stop or retire at once. A bee whose order lock is held is skipped this round; the
+   * holder is already acting on it. Firing bumps the bee's epoch, so its in-flight chooser answer and any queued
+   * execution from before are dropped.
+   */
+  async exitWatch(): Promise<void> {
+    if (this.stopped || this.watchingExits || this.closedAt !== null || this.d.feed.lastRefreshAt === 0) return;
+    if (!BEES.some((id) => this.bees[id]?.position)) return;
+    this.watchingExits = true;
+    try {
+      try {
+        await this.d.feed.refreshTickers();
+      } catch (err) {
+        log.warn("ticker refresh failed (exit watch)", { err: safeError(err) });
+      }
+      if (this.stopped || this.closedAt !== null) return;
+      const now = this.now();
+      for (const id of BEES) {
+        if (!this.bees[id]?.position || this.executing.has(id)) continue;
+        this.markBee(id, now);
+        if (!this.deterministicExit(id, now)) continue;
+        const ctx = this.ctx(id, now), brain = this.brain(id), cfg = this.d.cfg;
+        const key = brain.decisionKey?.(ctx);
+        if (key) {
+          const revision = createHash("sha256").update(JSON.stringify({
+            version: strategyVersion(cfg), style: brain.id, strategy: brain.strategy,
+            parameters: cfg.strategies[id], limits: cfg.cats[id], exits: cfg.exits[id],
+            rules: cfg.slots[id].rules, coins: cfg.slots[id].coins,
+          })).digest("hex").slice(0,16);
+          this.bees[id].strategyDecisionKey = `${revision}:${key}`;
+        }
+        this.exitEpoch[id] = (this.exitEpoch[id] ?? 0) + 1;
+        await this.decideBenched(id, now);
+      }
+    } finally {
+      this.watchingExits = false;
+    }
+  }
+
+  /**
+   * Execute under the bee's order lock. `epoch` is the bee's exit epoch when the decision was taken: if the exit watch
+   * has fired since, the decision was for a position that is gone, so it is dropped (the decision row stays recorded).
+   */
+  private async execute(id: BeeId, action: Action, decisionId: number, ctx: BeeContext, conviction: number, epoch?: number): Promise<void> {
+    const prev = this.beeLock[id] ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const chain = prev.then(() => mine);
+    this.beeLock[id] = chain;
+    await prev;
+    this.executing.add(id);
+    try {
+      if (this.stopped) return;
+      if (epoch !== undefined && (this.exitEpoch[id] ?? 0) !== epoch) {
+        log.info("stale decision dropped: an exit fired since it was taken", { bee: id, decisionId, action: action.kind });
+        return;
+      }
+      await this.executeAction(id, action, decisionId, ctx, conviction);
+    } finally {
+      this.executing.delete(id);
+      release();
+      if (this.beeLock[id] === chain) delete this.beeLock[id];
+    }
+  }
+
+  private async executeAction(id: BeeId, action: Action, decisionId: number, ctx: BeeContext, _conviction: number): Promise<void> {
     const bee = this.bees[id];
     const p = bee.position;
     switch (action.kind) {
@@ -562,8 +715,9 @@ export class Engine {
       case "trim": {
         if (!p) return;
         const inst = ctx.view.instruments.get(p.instId);
-        const n = inst ? roundToLot(p.contracts * action.fraction, inst) : 0;
-        if (n > 0 && inst && n >= inst.minSz) await this.order(id, decisionId, p.instId, p.side === "long" ? "sell" : "buy", n, true, "trim");
+        const n = action.reason === "profit_take" ? takeProfitContracts(this.ctx(id, this.now()))
+          : inst ? roundToLot(p.contracts * action.fraction, inst) : 0;
+        if (n > 0 && inst && n >= inst.minSz) await this.order(id, decisionId, p.instId, p.side === "long" ? "sell" : "buy", n, true, action.reason ?? "trim");
         else log.info("trim rounds to zero, skipped", { bee: id });
         return;
       }
@@ -646,7 +800,11 @@ export class Engine {
     db.updateOrder(orderId, "filled", res.ordId, null);
     const bee = this.bees[id];
     const realised = applyFill(bee, { instId, coin: inst.coin, side, contracts: res.contracts, px: res.avgPx, feeUsd: res.feeUsd, ctVal: inst.ctVal, ts: res.ts });
-    if (purpose === "trim" && res.contracts > 0 && bee.position) bee.position.trendTrimmed = true;
+    if (purpose === "trim" && res.contracts > 0 && bee.position) {
+      bee.position.trendTrimmed = true;
+      if (this.d.cfg.strategyEngine === "upstream") bee.position.entryScore = this.d.feed.view().stats.get(instId)?.trend?.score ?? bee.position.entryScore;
+    }
+    if (purpose === "profit_take" && res.contracts > 0 && bee.position) bee.position.profitTaken = true;
     const notionalUsd = res.contracts * inst.ctVal * res.avgPx;
     db.insertFill({ orderId, bee: id, ts: res.ts, instId, side, contracts: res.contracts, px: res.avgPx, notionalUsd, feeUsd: res.feeUsd, realisedUsd: realised, slippageUsd: res.slippageUsd ?? 0 });
     bee.slippageUsd += res.slippageUsd ?? 0;
@@ -697,7 +855,14 @@ export class Engine {
       for (const b of bills ?? []) {
         if (b.ts < since) continue;
         if (this.d.db.insertFunding(id, b.ts, b.instId, b.amountUsd, b.billId)) {
-          applyFunding(this.bees[id], b.amountUsd);
+          const p = this.bees[id].position;
+          let positionAmount = 0;
+          if (p && b.instId === p.instId && b.ts >= p.openedAt) {
+            const laterFills = this.d.db.raw.prepare(`SELECT side, contracts FROM fills
+              WHERE bee=? AND inst_id=? AND ts>? ORDER BY ts,id`).all(id, p.instId, b.ts) as Array<{side:"buy"|"sell";contracts:number}>;
+            positionAmount = fundingForRemainingPosition(b.amountUsd, p.contracts, p.side, laterFills);
+          }
+          applyFunding(this.bees[id], b.amountUsd, positionAmount);
           this.d.bus.emit("funding", { bee: id, coin: b.instId?.split("-")[0] ?? null, amountUsd: b.amountUsd }, b.ts);
         }
       }
@@ -763,6 +928,29 @@ export class Engine {
           const np = bee.position;
           np.initialStopPx = keepStop !== null && ours ? (ours.initialStopPx ?? ours.stopPx) : np.stopPx;
           np.peakPx = keepStop !== null && ours ? (ours.peakPx ?? null) : null;
+          // A matching position reduced outside our ledger retains proportional known costs.
+          // Unknown additions/new entry basis use the explicit estimated-cost fallback.
+          if (ours && sameInst && ours.side === side) {
+            np.openedAt = ours.openedAt;
+            np.profitTaken = ours.profitTaken;
+            if (!np.profitTaken && np.contracts < ours.contracts) {
+              // An ambiguous order may have filled at the exchange. Do not repeat a profit
+              // partial after reconciliation adopts that reduction without a local fill.
+              const uncertainProfit = this.d.db.raw.prepare(`SELECT 1 FROM orders
+                WHERE bee=? AND inst_id=? AND purpose='profit_take' AND state='unknown' AND ts>=? LIMIT 1`)
+                .get(id, theirs.instId, ours.openedAt);
+              if (uncertainProfit) np.profitTaken = true;
+            }
+            np.trendTrimmed = ours.trendTrimmed;
+            np.entryScore = ours.entryScore;
+            if (np.entryPx === ours.entryPx && np.contracts <= ours.contracts) {
+              const ratio = np.contracts / ours.contracts;
+              if (ours.entryFeesUsd !== undefined) np.entryFeesUsd = ours.entryFeesUsd * ratio;
+              if (ours.fundingAccruedUsd !== undefined) np.fundingAccruedUsd = ours.fundingAccruedUsd * ratio;
+              np.exitPeakPx = ours.exitPeakPx;
+              np.exitPeakNetPerUnit = ours.exitPeakNetPerUnit;
+            }
+          } else np.openedAt = now;
           if (inst && np.initialStopPx !== null && np.initialStopPx !== undefined) np.riskUsd = sizedRiskUsd(np.contracts, inst.ctVal, np.entryPx, np.initialStopPx);
           bee.flatSince = null;
         }
@@ -813,7 +1001,7 @@ export class Engine {
       }
     }
     const s = this.d.cfg.slots[id];
-    return (this.brains[id] ??= customBrain(BRAINS[s.style], liveRules(s, lab?.overlay(id) ?? null)));
+    return (this.brains[id] ??= customBrain(brainsFor(this.d.cfg)[s.style], liveRules(s, lab?.overlay(id) ?? null)));
   }
 
   private knobs(id: BeeId) {

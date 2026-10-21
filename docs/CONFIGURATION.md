@@ -1,6 +1,8 @@
+> **Argon update (21 October 2026):** For Gemini and the upstream strategies, use [the migration guide](UPSTREAM_ARGON_2026-10-21.md). Set `DECISION_PROVIDER=gemini` and `STRATEGY_ENGINE=upstream` explicitly. The signal and profit-review knobs described below belong to `STRATEGY_ENGINE=catfolio`. The independent protective watch runs for both engines. Existing environment values override new defaults.
+
 # Effective configuration and trainer controls
 
-Applies to `catfolio-8-bar-driven-strategies`. `.env.example` lists supported settings. Arcane's saved environment is the deployment source; editing a local `.env` does not update Arcane. Restart the engine after editing its environment, preserving the database volume and starting allocation. `DRY_RUN=true` / `MODE=paper` keeps execution simulated. The supplied Compose files enforce paper mode. See the [strategy audit](STRATEGY_REVIEW_2026-10-16.md) and [retrospective comparison](STRATEGY_BACKTEST_2026-10-16.md); no profitable portfolio has been established.
+Applies to `catfolio-9-profit-protection`. `.env.example` lists supported settings. Arcane's saved environment is the deployment source; editing a local `.env` does not update Arcane. Deploy the new image before configuring the new exit controls, then restart the engine after environment changes while preserving the database volume and starting allocation. `DRY_RUN=true` / `MODE=paper` keeps execution simulated. The supplied Compose files enforce paper mode. See the [profit-exit implementation and copyable Arcane settings](PROFIT_EXITS_2026-10-19.md), [strategy audit](STRATEGY_REVIEW_2026-10-16.md) and [retrospective comparison](STRATEGY_BACKTEST_2026-10-16.md); no profitable portfolio has been established.
 
 ## Owner limits and actual sizing
 
@@ -10,7 +12,7 @@ Applies to `catfolio-8-bar-driven-strategies`. `.env.example` lists supported se
 
 Good also caps size at absolute trend score / 9 of maximum notional and equity × `MOCHI_VOL_TARGET_PCT` / measured annualized volatility. The old 50% sizing floor and forced minimum dollar size are gone. Larger exposure does not establish better expected returns.
 
-Capital allocation, leverage, stop-risk budgets, loss limits, trade/fee limits, cooldowns, spread/liquidity gates, stop ATR multipliers, holding limits, execution mode and API credentials are **owner-controlled**. The trainer cannot edit them. Both long and short trades remain supported.
+Capital allocation, leverage, stop-risk budgets, loss limits, trade/fee limits, cooldowns, spread/liquidity gates, initial and trailing stop settings, profit protection, partial profit-taking, exit-review cadence and probability gates, holding limits, execution mode and API credentials are **owner-controlled**. The trainer cannot edit them. Both long and short trades remain supported.
 
 ## Strategy parameters
 
@@ -36,9 +38,34 @@ The owner may configure values within the broader validation ranges in `src/conf
 
 Both strategies can WAIT and neither forces an entry. The signal modes, channel horizons and execution filters are owner controls so a trainer cannot silently change the hypothesis being tested. The two momentum parameters are omitted from trainer controls in breakout mode, where they have no effect. Cost feasibility is not an estimate of future profit; funding is separate from this execution-cost estimate.
 
-Dark gets at most one strategy decision per completed 15-minute bar; Good gets one per completed four-hour bar. The consumed bar persists before inference, including provider errors and vetoes, so a restart or ten-second tick cannot resample the same opportunity. Markets missing the current completed candle are omitted for that bar. Owner/configuration changes create a new decision revision. Protection, mark-to-market and loss/time stops keep running on `DECISION_INTERVAL_MS`; this setting does not control signal frequency. Waiting protection pulses do not count as trainer observations.
+Dark gets at most one entry evaluation per completed 15-minute bar; Good gets one per completed four-hour bar. The consumed bar persists before inference, including provider errors and vetoes, so a restart or ten-second tick cannot resample the same opportunity. Markets missing the current completed candle are omitted for that bar. Owner/configuration changes create a new decision revision. Fresh signal-bar decisions have priority; eligible winning positions also receive separate model profit reviews between bars. A signal decision consumes any currently eligible profit-review interval, avoiding an extra same-interval profit request. Protection, mark-to-market and loss/time stops run within the serialized `DECISION_INTERVAL_MS` tick; an outstanding request can delay the next tick. This setting does not control signal frequency. Waiting protection pulses and extra between-bar profit reviews do not count as independent completed-bar trainer observations.
 
-While a signal persists, the model cannot arbitrarily close or immediately flip a position. Dark exits when both return and MACD turn against it, or the configured breakout exit fails. Good exits when its signed trend score reaches zero or turns against it. Good also rejects entries whose live price has already crossed the channel stop. It can trim once per position, remembers that trim across restart, and never automatically buys the trimmed exposure back. Adds require a winner above +1R, a valid current trend, available target size and stop-risk room. Existing maximum holds remain 120/360 minutes by default; longer experimental holds are never enabled automatically.
+Dark exits deterministically when both return and MACD turn against it, or the configured breakout exit fails. Good exits when its signed trend score reaches zero or turns against it. Good also rejects entries whose live price has already crossed the channel stop. Jev can choose an eligible profit close or partial profit trim while the signal still persists; it cannot veto a protective exit or immediately flip a position. Good's score-deterioration trim and optional profit trim can each occur once per position, persist across restart, and prohibit subsequent adds. Otherwise adds require a winner above +1R, a valid current trend, available target size and stop-risk room. Profit reviews allow only HOLD, closes and trims, so they cannot add exposure. Existing maximum holds remain 120/360 minutes by default; longer experimental holds are never enabled automatically.
+
+## Profit protection and model exits
+
+The new build enables these defaults automatically. Explicit Arcane values are optional; use them to make the deployment settings visible. Each suffix below accepts both `TIGER_` and `MOCHI_`. All twelve controls are owner-only.
+
+| Environment suffix | Dark default | Good default | Effect |
+|---|---:|---:|---|
+| `BREAKEVEN_AT_R` | 0.5 | 1 | Peak estimated net R that arms a cost-covering stop; 0 disables |
+| `BREAKEVEN_BUFFER_BPS` | 1 | 1 | Additional buffer in basis points of entry notional |
+| `TRAIL_ACTIVATION_R` | 0.75 | 1.5 | Peak estimated net R that arms independent ATR trailing; 0 disables |
+| `TRAIL_ATR_MULT` | 1 | 1.5 | Trailing distance, separate from the initial `STOP_ATR_MULT`; 15-minute ATR for Dark, four-hour ATR for Good |
+| `PROFIT_LOCK_AT_R` | 1 | 2 | Peak estimated net R that arms peak-profit protection; 0 disables |
+| `MAX_PROFIT_GIVEBACK_PCT` | 35 | 40 | Portion of peak net profit the stop may surrender; 100 disables this protection |
+| `PARTIAL_TAKE_PROFIT_ENABLED` | true | true | Offer Jev a partial profit trim when eligible; false disables the option |
+| `PARTIAL_TAKE_PROFIT_AT_R` | 1.5 | 2 | Current estimated net R required for the partial option |
+| `PARTIAL_TAKE_PROFIT_FRACTION` | 0.5 | 0.5 | Fraction of remaining contracts to close, rounded down to exchange lot size |
+| `EXIT_REVIEW_MIN_R` | 0.5 | 1 | Current estimated net R required for discretionary profit review; 0 disables reviews |
+| `EXIT_REVIEW_INTERVAL_SECONDS` | 60 | 300 | One eligible model review per interval, persisted before inference |
+| `EXIT_MIN_ACTION_PROBABILITY` | 0.4 | 0.4 | Minimum weight assigned to the selected discretionary reducing action; entry conviction does not apply |
+
+R uses the remaining position's initial gross stop risk as its denominator; profit used by the new controls is **after estimated closing fees, current spread and adverse slippage, remaining opening fees and recorded position funding**. Initial fill prices already contain their spread/slippage, so these are not charged twice. Inference costs and unrecorded/future funding are excluded. The old `upl_r` snapshot field remains gross; new `profit.net_r` and `profit.peak_net_r` are after-cost estimates. A lower trailing ATR multiplier tightens the trail without changing entry sizing or the initial stop.
+
+The tightest enabled barrier wins and stops never move away from the position's profitable direction. Good retains its channel trail as another candidate. Jev receives current and peak estimated net profit, giveback, cost-covering stop price, whether a profit trim happened, and whether legacy entry costs were estimated. It chooses HOLD, CLOSE_PROFIT or eligible TAKE_PROFIT using directional evidence and giveback. A selected exit with `p=0.44` passes the default `0.4` threshold; this is a relative menu weight, not a 44% chance of making money. No 100% certainty or entry conviction score is required.
+
+Partial profit-taking is optional and model-selected. It is consumed only by a filled profit trim, requires both the sold and remaining contracts to meet exchange minimums, and does not repeatedly halve the position. Trade-count and fee caps do not block reducing exposure. Provider errors, exhausted credits or a model HOLD leave deterministic protection available on the next valid tick; they do not bypass stop execution. Protection is not a separate real-time timer: in-flight network/model work, stale quotes, gaps and execution failures can delay or worsen exits. The limits target behavior, not guaranteed sale prices or profits.
 
 ## Reset an exhausted entry allowance
 
@@ -54,11 +81,11 @@ The authenticated endpoint is `POST /controls/reset-entry-limit` with JSON `{"ca
 
 Every numeric change requires at least five fully completed trades under the current strategy. Relaxing an entry threshold additionally requires positive completed-trade net P&L after fees, at least 30 relevant veto/blocker episodes and a current fresh signal with no unrelated blockers. Funding and inference costs are not allocated to individual trades, so positive after-fee P&L does not establish all-cost profitability. These are minimum evidence checks, not statistical proof.
 
-Readiness and evidence cover at most seven days and start again after the latest accepted change or reset. Reviews require 30 distinct completed signal-bar observations, excluding idle protection pulses; this takes roughly 7.5 hours for Dark and five days for Good when observations are available. Repeated records from one bar count once. Completed-trade P&L includes actual fills and all opening/add/trim/closing fees; slippage is already in fills. Funding and inference costs remain separate in the report. The prompt prioritizes net results and drawdown over activity and permits no change. There is no guaranteed optimizer or automatic statistical rollback system.
+Readiness and evidence cover at most seven days and start again after the latest accepted change or reset. Reviews require 30 distinct completed signal-bar observations, excluding idle protection pulses and profit reviews; this takes roughly 7.5 hours for Dark and five days for Good when observations are available. Repeated records from one bar count once. Completed-trade P&L includes actual fills and all opening/add/trim/closing fees; slippage is already in fills. Funding and inference costs remain separate in the report. The prompt prioritizes net results and drawdown over activity and permits no change. There is no guaranteed optimizer or automatic statistical rollback system.
 
 Applied values persist in the database. The dashboard shows the effective parameters, each numeric `from → to` change, and review history. Owner reset restores baseline rules, coins and all numeric values. An explicit environment baseline change supersedes an older saved overlay at restart. In-flight model answers become invalid when trainer settings change.
 
-Version 8 retires both bots' old trainer overlays while keeping review history, balances, positions and fills. Old strategies' observations do not justify new parameter changes. Existing positions immediately become subject to the configured holding limits and new deterministic signal exits. An older position may close on the first tick after upgrade. Protection remains inside the serialized trading tick; an already-triggered exit skips its model request, but another outstanding request can still delay subsequent ticks.
+Version 9 retires both bots' old trainer overlays while keeping review history, balances, positions and fills. Old strategies' observations do not justify new parameter changes. Existing positions become subject to the configured profit protection immediately; an older position may close on the first tick after upgrade. Existing ratcheted stops are retained. New positions record their opening fees and funding; older positions estimate missing opening fees and cannot reconstruct unrecorded position funding or historical peaks. Peak profit, tightened stops, consumed review intervals and completed profit trims survive normal restarts. Protection remains inside the serialized trading tick; an already-triggered exit skips its model request, but another outstanding request can still delay subsequent ticks. No database reset is needed.
 
 ## Remove obsolete settings
 

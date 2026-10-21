@@ -76,6 +76,6 @@ export function morningReport(
       )
       .all(),
     limitations:
-      "Whole-run report; mixed providers do not allow clean attribution of trading returns. API costs are estimates from reported input tokens; timed-out requests can still be billed. Costs are separate from cat trading equity. Equity uses the last observed quote; CLI does not fetch new quotes. Realised P&L is before fees/funding. Slippage includes half spread plus configured adverse slippage, already embedded in P&L. Funding approximates 8-hour settlements; downtime is not backfilled. Exposure time excludes downtime. No queue, depth, liquidation or market impact simulation. A profitable night is not evidence of a durable advantage.",
+      "Whole-run report; mixed providers do not allow clean attribution of trading returns. API costs are estimates. Gemini includes output/thinking tokens and reserves unknown billing at its worst case; Jev estimates input tokens, and timeouts may still be billed. Costs are separate from cat trading equity. Equity uses the last observed quote; CLI does not fetch new quotes. Realised P&L is before fees/funding. Slippage includes half spread plus configured adverse slippage, already embedded in P&L. Funding approximates 8-hour settlements; downtime is not backfilled. Exposure time excludes downtime. No queue, depth, liquidation or market impact simulation. A profitable night is not evidence of a durable advantage.",
   };
 }

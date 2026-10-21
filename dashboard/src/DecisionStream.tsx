@@ -1,3 +1,4 @@
+import { fallbackText } from "./BrainPanel";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { CAT_IDS } from "./CatCard";
 import { DECISION_LIMIT, decisionKey } from "./decisionFeed";
@@ -35,12 +36,15 @@ function actionNote(d: Decision) {
   if (d.forcedBy)
     return `Protection requested ${d.action?.kind ?? "an action"}: ${explain(d.forcedBy)}.`;
   if (d.vetoedBy) return `Blocked: ${explain(d.vetoedBy)}.`;
+  if (d.source === "code" || d.decidedBy === "code")
+    return `Code chose ${d.choice ?? "hold"}: ${fallbackText(d.fallbackReason)}. Free-text rules were not read. Risk checks and execution still apply.`;
   if (d.error)
     return "No usable model answer. This attempt was recorded; no model trade allowed.";
+  if (d.source === "rules" && d.choice?.includes("HOLD")) return "Only legal move: keep the position. The model was not called.";
   if (d.source === "rules")
     return d.entryDiagnostics?.some(dataBlocked)
-      ? "Market data is missing or out of date. Affected coins cannot qualify for entry; JEV was not called because no trade option was available."
-      : "No coin passed every entry rule below. JEV was not called because there was no eligible trade to evaluate.";
+      ? "Market data is missing or out of date. Affected coins cannot qualify for entry; The model was not called because no trade option was available."
+      : "No coin passed every entry rule below. The model was not called because there was no eligible trade to evaluate.";
   if (d.action && d.action.kind !== "none") {
     const size =
       d.action.notionalUsd == null
@@ -73,7 +77,7 @@ function DecisionRow({
   const topOptions = options.slice(0, 3);
   if (selectedOption && !topOptions.some(([label]) => label === d.choice))
     topOptions[2] = selectedOption;
-  const showOptions = options.length > 0 && d.source !== "rules";
+  const showOptions = options.length > 0 && d.source !== "rules" && d.source !== "code" && d.probabilityKind !== "self_reported";
   const diagnostics = d.entryDiagnostics?.filter((c) => c.blockers.length);
   const summary = d.forcedBy
     ? `Protection · ${explain(d.forcedBy)}`
@@ -81,8 +85,8 @@ function DecisionRow({
       ? `Blocked · ${explain(d.vetoedBy)}`
       : d.error
         ? "Model unavailable · no model trade"
-        : d.source === "rules"
-          ? d.entryDiagnostics?.some(dataBlocked) ? "Market data issue · entry checks incomplete" : "No qualifying entry"
+        : d.source === "code" ? `CODE · ${fallbackText(d.fallbackReason)}` : d.source === "rules"
+          ? d.choice?.includes("HOLD") ? "Rules · holding position" : d.entryDiagnostics?.some(dataBlocked) ? "Market data issue · entry checks incomplete" : "No qualifying entry"
           : "Decision details";
   if (inspect) return <li className={`stream-row stream-preview-row ${d.bee}`} data-decision-key={decisionKey(d)}>
     <button onClick={inspect} aria-label={`${name}: ${d.choice ?? "No model action"}. Open decision details`}>
@@ -109,8 +113,8 @@ function DecisionRow({
               {d.pnlUsd >= 0 ? "▲" : "▼"} {signed(d.pnlUsd)}
             </span>
           )}
-          {selected !== undefined && d.source !== "rules" && (
-            <span title="Probability assigned to the selected action; not a chance of profit">
+          {selected !== undefined && d.source !== "rules" && d.source !== "code" && (
+            <span title={d.probabilityKind === "self_reported" ? "Gemini self-reported confidence; not a calibrated probability or chance of profit" : "Probability assigned to the selected action; not a chance of profit"}>
               {Math.round(selected * 100)}%
             </span>
           )}
@@ -155,7 +159,7 @@ function DecisionRow({
         <summary className={d.vetoedBy || d.error ? "negative" : ""}>
           <span className="stream-detail-label">
             {!showOptions && (
-              <b>{d.source === "rules" ? "RULES" : "RECORDED"}</b>
+              <b>{d.source === "code" ? "CODE" : d.source === "rules" ? "RULES" : d.decidedBy?.toUpperCase() ?? "RECORDED"}</b>
             )}
             {summary}
           </span>
@@ -172,7 +176,7 @@ function DecisionRow({
         </summary>
         <div className="stream-detail-body">
           <p>{actionNote(d)}</p>
-          <p>Recorded result: {d.status}</p>
+          <p>Recorded result: {d.status}</p>{d.probabilityKind === "self_reported" && d.source === "model" && <p>Gemini reports its own confidence. These are not calibrated action probabilities or chances of profit.</p>}
           {d.latencyMs != null && <p>Decision latency: {d.latencyMs} ms</p>}
           {showOptions && (
             <dl className="stream-all-options">

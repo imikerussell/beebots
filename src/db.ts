@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS bee_state (bee TEXT PRIMARY KEY, json TEXT NOT NULL, 
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS chooser_spend (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, bee TEXT NOT NULL, reserved_usd REAL NOT NULL, charged_usd REAL NOT NULL, settled INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS chooser_spend_ts ON chooser_spend(ts);
 `;
 
 export interface DecisionRow {
@@ -59,6 +61,8 @@ export interface DecisionRow {
   forcedBy: string | null;
   status: string;
   auditJson?: string;
+  decidedBy?: string | null;
+  fallbackReason?: string | null;
 }
 
 export interface OrderRow {
@@ -139,6 +143,8 @@ export class Db {
         );
     };
     addColumn("decisions", "audit_json", "TEXT");
+    addColumn("decisions", "decided_by", "TEXT");
+    addColumn("decisions", "fallback_reason", "TEXT");
     addColumn("fills", "slippage_usd", "REAL NOT NULL DEFAULT 0");
     this.raw.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS execution_once ON orders(decision_id, bee, purpose)",
@@ -161,8 +167,8 @@ export class Db {
     const r = this.raw
       .prepare(
         `INSERT INTO decisions (bee, ts, state_hash, state_json, menu_json, choice, probabilities_json, confidence, conviction,
-          latency_ms, input_tokens, jev_cost_usd, jev_error, action_json, vetoed_by, forced_by, status, audit_json)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          latency_ms, input_tokens, jev_cost_usd, jev_error, action_json, vetoed_by, forced_by, status, audit_json, decided_by, fallback_reason)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         d.bee,
@@ -183,8 +189,20 @@ export class Db {
         d.forcedBy,
         d.status,
         d.auditJson ?? null,
+        d.decidedBy ?? null,
+        d.fallbackReason ?? null,
       );
     return Number(r.lastInsertRowid);
+  }
+
+  reserveChooserSpend(ts: number, bee: string, usd: number): number {
+    return Number(this.raw.prepare("INSERT INTO chooser_spend (ts, bee, reserved_usd, charged_usd) VALUES (?,?,?,?)").run(ts, bee, usd, usd).lastInsertRowid);
+  }
+  settleChooserSpend(id: number, usd: number): void {
+    this.raw.prepare("UPDATE chooser_spend SET charged_usd=?, settled=1 WHERE id=?").run(usd, id);
+  }
+  chooserSpendSince(ts: number): number {
+    return (this.raw.prepare("SELECT COALESCE(SUM(charged_usd),0) AS spent FROM chooser_spend WHERE ts>=?").get(ts) as {spent:number}).spent;
   }
 
   insertOrder(o: OrderRow): number {

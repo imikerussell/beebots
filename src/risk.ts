@@ -2,6 +2,7 @@
 // Pure: no I/O, no clock, no randomness. Every veto, shrink and force says why.
 
 import { entriesUsed, maxNotionalUsd, minutesSince, positionNotional } from "./bees/common.js";
+import { profitReviewMenu } from "./bees/profit-management.js";
 import type { Action, BeeBrain, BeeContext, CapReason, Intent } from "./bees/types.js";
 
 export type { Action } from "./bees/types.js";
@@ -45,6 +46,8 @@ export interface RiskResult {
   status: string;
 }
 
+const nowInvalid = (now: number, ts: number, maxAge: number) => !Number.isFinite(ts) || now < ts || now - ts > maxAge;
+
 const NONE: Action = { kind: "none" };
 const isOpening = (i: Intent) => i.kind === "open" || i.kind === "switch" || i.kind === "add";
 
@@ -67,8 +70,8 @@ export function evaluateCaps(ctx: BeeContext): { cap: CapReason | null; tripped:
   return { cap: null, tripped: null };
 }
 
-/** Benched bees ride: only a stop (or the loss stop) closes the position before the 00:00 UTC reset. */
-const riding = (ctx: BeeContext) => (ctx.bee.position ? `riding its ${ctx.bee.position.coin} until the stop or 00:00 UTC` : "back at 00:00 UTC");
+/** Entry caps never prevent reductions or protective exits. */
+const riding = (ctx: BeeContext) => (ctx.bee.position ? `managing its ${ctx.bee.position.coin}; exits remain active` : "back at 00:00 UTC");
 
 export function capStatus(cap: CapReason, ctx: BeeContext): string {
   switch (cap) {
@@ -95,6 +98,14 @@ function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCh
   const { bee, view, knobs } = ctx;
   const max = maxNotionalUsd(ctx) * sizeMult;
   if (!(max > 0)) return { ok: false, why: "no_equity" };
+  const marketVeto = (s: NonNullable<ReturnType<typeof view.stats.get>>) => {
+    if (ctx.cfg.strategyEngine !== "upstream") return null;
+    const t = view.tickers.get(s.instId), refreshed = s.refreshedAt ?? view.ts;
+    if (!t || nowInvalid(ctx.now, t.ts, ctx.cfg.maxTickerAgeMs)) return "stale_market_data";
+    if (nowInvalid(ctx.now, refreshed, 3 * ctx.cfg.dataRefreshMs)) return "stale_indicators";
+    if (!view.gated.includes(s.instId) || !(s.vol24hUsd >= (ctx.cfg.cats[bee.id]?.minVolumeUsd ?? ctx.cfg.universe.min24hVolUsd))) return "liquidity_gate";
+    return null;
+  };
 
   // Current strategies budget the potential stop loss, including estimated round-trip costs.
   // The estimate is not a guaranteed loss ceiling: gaps/slippage can exceed it.
@@ -112,9 +123,12 @@ function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCh
 
   if (intent.kind === "add") {
     const p = bee.position!;
+    if (p.profitTaken) return { ok: false, why: "profit_already_taken" };
     const s = view.stats.get(p.instId);
     const inst = view.instruments.get(p.instId);
     if (!s || !inst) return { ok: false, why: "no_market_data" };
+    const veto = marketVeto(s);
+    if (veto) return { ok: false, why: veto };
     if (s.spreadBp > knobs.spreadGateBps) return { ok: false, why: `spread_gate ${p.coin} ${s.spreadBp.toFixed(1)}bp` };
     const room = max - positionNotional(p, s.mid, inst.ctVal);
     const existingRisk = p.stopPx == null ? Infinity : Math.max(0, (p.side === "long" ? 1 : -1) * (p.entryPx - p.stopPx)) * p.contracts * inst.ctVal
@@ -129,6 +143,8 @@ function checkOpen(intent: Intent, input: RiskInput, conviction: number): OpenCh
   const s = view.stats.get(intent.instId);
   const inst = view.instruments.get(intent.instId);
   if (!s || !inst) return { ok: false, why: "no_market_data" };
+  const veto = marketVeto(s);
+  if (veto) return { ok: false, why: veto };
   if (s.spreadBp > knobs.spreadGateBps) return { ok: false, why: `spread_gate ${s.coin} ${s.spreadBp.toFixed(1)}bp` };
   if (intent.side === "long" && brain.fundingVetoLongZ !== undefined && s.fundingZ !== null && s.fundingZ > brain.fundingVetoLongZ) {
     return { ok: false, why: `funding_veto ${s.coin} z=${s.fundingZ.toFixed(1)}` };
@@ -147,7 +163,7 @@ function toAction(intent: Intent, notionalUsd?: number): Action {
     case "close":
       return { kind: "close", reason: intent.reason };
     case "trim":
-      return { kind: "trim", fraction: intent.fraction };
+      return { kind: "trim", fraction: intent.fraction, ...(intent.reason ? { reason: intent.reason } : {}) };
     case "add":
       return { kind: "add", notionalUsd: notionalUsd! };
     case "open":
@@ -181,8 +197,12 @@ export function applyRisk(input: RiskInput): RiskResult {
   // 2. Code stops fire whatever Jev says, and even when Jev is down.
   if (p) {
     const s = view.stats.get(p.instId);
-    if (s && p.stopPx !== null) {
-      const hit = p.side === "long" ? s.mid <= p.stopPx : s.mid >= p.stopPx;
+    const t = view.tickers.get(p.instId);
+    const stopMid = (brain.profitProtection || ctx.cfg.strategyEngine === "upstream")
+      ? t && Number.isFinite(t.mid) && t.mid > 0 && now >= t.ts && now - t.ts <= ctx.cfg.maxTickerAgeMs ? t.mid : null
+      : s?.mid;
+    if (stopMid != null && p.stopPx !== null) {
+      const hit = p.side === "long" ? stopMid <= p.stopPx : stopMid >= p.stopPx;
       if (hit) return out({ kind: "close", reason: "stop" }, { forcedBy: "stop", vetoedBy: proposal ? "stop" : null, status: `stopped out of ${p.coin}` });
     }
     const ts = brain.timeStopMinutes?.(ctx);
@@ -209,6 +229,18 @@ export function applyRisk(input: RiskInput): RiskResult {
   if (!p && intent.kind !== "open" && intent.kind !== "hold") veto("invalid_while_flat");
   if (p && intent.kind === "open") veto("invalid_while_positioned");
   if (p && intent.kind === "switch" && intent.instId === p.instId && intent.side === p.side) veto("switch_to_same");
+
+  // Reducing choices have their own label threshold. Entry conviction is not an exit veto.
+  if (proposal && (intent.kind === "close" || intent.kind === "trim")) {
+    const gate = brain.exitGate?.(ctx);
+    if (gate && (!Number.isFinite(proposal.prob) || proposal.prob < gate.minProb))
+      veto(`weak_exit_probability p=${proposal.prob.toFixed(2)}`);
+    else if ((intent.kind === "close" && intent.reason === "model_profit_take") ||
+      (intent.kind === "trim" && intent.reason === "profit_take")) {
+      const current = profitReviewMenu(ctx)[proposal.label]?.intent;
+      if (!current || JSON.stringify(current) !== JSON.stringify(intent)) veto("profit_exit_no_longer_eligible");
+    }
+  }
 
   // 5. Opening gates.
   if (proposal && isOpening(intent)) {

@@ -1,7 +1,7 @@
 {
   "name": "catfolio-dashboard",
   "private": true,
-  "version": "2026.10.2",
+  "version": "2026.10.21",
   "type": "module",
   "scripts": {
     "dev": "vite",

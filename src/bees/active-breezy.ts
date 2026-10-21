@@ -1,6 +1,7 @@
 // Configurable Donchian strategy. breezy.ts preserves the historical source brain.
 import { breezy } from "./breezy.js";
 import { currentSignalBar, decisionBarKey, maxNotionalUsd, positionNotional, roundTripCostPct } from "./common.js";
+import { profitReviewKey, profitReviewMenu } from "./profit-management.js";
 import type { CoinStats } from "../market/types.js";
 import type { BeeBrain, BeeContext, Intent, Menu } from "./types.js";
 
@@ -35,11 +36,14 @@ export function trendSizeFrac(s: CoinStats, ctx: BeeContext): number {
 
 export const activeBreezy: BeeBrain = {
   ...breezy,
-  strategy: "Follow the nine Donchian channels on completed four-hour BTC/ETH candles. Evaluate the qualified trend-direction candidate against WAIT once per signal bar. HOLD_WINNER while the trend persists; code exits when its direction is lost. ADD_TO_WINNER only above +1R within the target and risk budget. TRIM_HALF reduces exposure once after the configured score deterioration; do not buy it back. Code owns numeric thresholds, sizing, stops and the maximum holding time.",
+  strategy: "Follow the nine Donchian channels on completed four-hour BTC/ETH candles. Evaluate the qualified trend-direction candidate against WAIT once per signal bar. While invested, profit reviews can occur between signal bars. Compare HOLD_WINNER with CLOSE_PROFIT or optional TAKE_PROFIT when offered: hold persistent trends, reduce or close a winner when trend evidence weakens or estimated net profit gives back from its peak. Judge net profit after estimated costs, not gross returns alone. ADD_TO_WINNER only above +1R within the target and risk budget, before any profit-taking or score-deterioration trim. TRIM_HALF reduces exposure once after the configured score deterioration; do not buy it back. Code independently enforces trend invalidation, cost-covering stops, channel and ATR trailing stops, peak-profit protection and maximum holding time, even if you HOLD or inference is unavailable. Choice probabilities are relative menu weights, not calibrated win probabilities; exits use their configured probability threshold without the entry conviction gate, and do not require certainty.",
   openGate: undefined,
   entryGate: ctx => ({ minConviction: ctx.cfg.cats[ctx.bee.id].minConviction, minProb: ctx.cfg.cats[ctx.bee.id].minActionProbability }),
   neverForce: true,
   decisionKey: ctx => decisionBarKey(ctx,240),
+  profitProtection: true,
+  managementKey: profitReviewKey,
+  exitGate: ctx => ({ minProb: ctx.cfg.exits[ctx.bee.id].minActionProbability }),
   forcedEntry: () => null,
   rebalance: undefined,
   timeStopMinutes: ctx => ctx.cfg.strategies.mochi.maxHoldMinutes,
@@ -59,13 +63,17 @@ export const activeBreezy: BeeBrain = {
     const cur = ctx.view.stats.get(p.instId), inst = ctx.view.instruments.get(p.instId);
     const fresh = cur && currentSignalBar(cur,ctx,240);
     const failedTrend = fresh && cur.trend && (p.side === "long" ? 1 : -1)*cur.trend.score <= 0;
-    if (failedTrend) m.CLOSE = {desc:"completed-bar trend lost its direction",intent:{kind:"close",reason:"trend_exit"}};
+    if (failedTrend) {
+      m.CLOSE = {desc:"completed-bar trend lost its direction",intent:{kind:"close",reason:"trend_exit"}};
+      return m;
+    }
+    Object.assign(m, profitReviewMenu(ctx));
     if (fresh && cur.trend && p.entryScore !== undefined && !p.trendTrimmed) {
       const dir = p.side === "long" ? 1 : -1;
       if (dir * cur.trend.score <= dir * p.entryScore - ctx.cfg.strategies.mochi.trimScoreDrop)
         m.TRIM_HALF = { desc: "one score-deterioration trim per position", intent: { kind: "trim", fraction: 0.5 } };
     }
-    if (!p.trendTrimmed && !m.TRIM_HALF && (ctx.uplR ?? 0) > 1 && cur && inst && eligible.includes(cur) &&
+    if (!p.trendTrimmed && !p.profitTaken && !m.TRIM_HALF && !m.TAKE_PROFIT && (ctx.uplR ?? 0) > 1 && cur && inst && eligible.includes(cur) &&
       (p.side === "long" ? cur.trend!.score > 0 : cur.trend!.score < 0)) {
       const max = maxNotionalUsd(ctx), gap = trendSizeFrac(cur, ctx) * max - positionNotional(p, cur.mid, inst.ctVal);
       if (gap >= inst.minSz * inst.ctVal * cur.mid)

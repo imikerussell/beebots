@@ -214,6 +214,16 @@ describe("rules and coins trainer", () => {
     expect(h.fetcher).not.toHaveBeenCalled();
     expect(h.coach.state().cats[0]?.observations).toBe(29);
   });
+  it("does not use between-bar profit reviews as new entry-strategy evidence", async () => {
+    const h = harness({seed:false,autoApply:false});
+    observations(h.db,"tiger",h.now(),29);
+    const latest = h.db.raw.prepare("SELECT MAX(id) AS id FROM decisions").get() as {id:number};
+    observations(h.db,"tiger",h.now(),35);
+    h.db.raw.prepare("UPDATE decisions SET audit_json=json_set(audit_json,'$.decisionKind','profit_review'), choice='CLOSE_PROFIT' WHERE id>?").run(latest.id);
+    await h.coach.tick();
+    expect(h.fetcher).not.toHaveBeenCalled();
+    expect(h.coach.state().cats[0]?.observations).toBe(29);
+  });
   it("requires 30 new Good signal bars after an applied change and again after reset", async () => {
     const h = harness({seed:false}); observations(h.db,"mochi",h.now(),30);
     await h.coach.tick();

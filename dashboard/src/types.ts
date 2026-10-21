@@ -31,6 +31,8 @@ export interface Cat {
   } | null;
   cap: string | null;
   last: {
+    decidedBy?: string | null;
+    fallbackReason?: string | null;
     choice: string | null;
     status: string;
     vetoedBy: string | null;
@@ -39,6 +41,7 @@ export interface Cat {
   } | null;
 }
 export interface Snapshot {
+  strategyEngine?: "upstream" | "catfolio";
   ownerControlsEnabled?: boolean;
   ts: number;
   mode: "PAPER" | "DEMO" | "LIVE";
@@ -63,6 +66,11 @@ export interface Snapshot {
     activeRequests?: number;
     queuedRequests?: number;
     retryAt?: number | null;
+    reservedUsd?: number;
+    budgetRefused?: boolean;
+    lastFallback?: { reason: string; at: number } | null;
+    minIntervalMs?: number;
+    probabilityKind?: "self_reported";
   };
   market: { refreshedAt: number };
   coach?: CoachState;
@@ -88,7 +96,10 @@ export interface Decision {
   latencyMs?: number | null;
   probabilities?: Record<string, number> | null;
   confidence?: number | null;
-  source?: "model" | "rules" | "protection";
+  source?: "model" | "rules" | "protection" | "code";
+  decidedBy?: string | null;
+  fallbackReason?: string | null;
+  probabilityKind?: "self_reported" | "distribution";
   pnlUsd?: number;
   vetoedBy?: string | null;
   forcedBy?: string | null;
@@ -162,6 +173,7 @@ export interface CoachEntry {
     blockers: Array<{ reason: string; decisions: number }> };
 }
 export interface CoachState {
+  benched?: boolean;
   automatic?: boolean; autoApply?: boolean; reviewIntervalMs?: number; evidenceWindowMs?: number;
   enabled: boolean; canReview: boolean; model: string; message: string; approvalMessage: string | null;
   checkedAt: number | null; checkIntervalMs: number;

@@ -5,6 +5,7 @@ import { breakoutLevels } from "../src/market/data.js";
 import { donchianEnsemble } from "../src/market/indicators.js";
 import { catBrain } from "../src/cats.js";
 import { BRAINS } from "../src/bees/index.js";
+import { profitStopCandidate } from "../src/bees/profit-management.js";
 import type { Candle } from "../src/market/types.js";
 const DAY = 86400000, dayStart = Math.floor(NOW / DAY) * DAY;
 
@@ -99,11 +100,16 @@ describe("source strategy parity through the cat adapter", () => {
     expect(restricted.menu(h.ctx).CLOSE).toBeDefined();
     expect(restricted.menu(h.ctx).FLIP_SHORT).toBeUndefined();
   });
-  it("only starts trailing after +1R and mirrors the short stop", () => {
-    const h = riskFixture(); h.b.position = position(h.s,{side:"short",stopPx:110});
-    h.ctx.uplR = 0.5; expect(h.brain.trail!(h.ctx)).toBeNull();
-    h.ctx.uplR = 1.1; expect(h.brain.trail!(h.ctx)).toBe(100.75);
-    h.s.refreshedAt = NOW - 240000; expect(h.brain.trail!(h.ctx)).toBeNull();
+  it("trails a short after its configured net R threshold with an independent ATR distance", () => {
+    const h = riskFixture(); h.b.position = position(h.s,{side:"short",stopPx:110,riskUsd:1});
+    Object.assign(h.cfg.exits.tiger,{breakevenAtR:0,profitLockAtR:0,trailActivationR:0.75,trailAtrMult:1.2});
+    const t = h.ctx.view.tickers.get(h.s.instId)!;
+    Object.assign(t,{mid:99.6,bid:99.59,ask:99.61});
+    expect(profitStopCandidate(h.ctx)?.stopPx).toBeNull();
+    Object.assign(t,{mid:98.8,bid:98.79,ask:98.81});
+    expect(profitStopCandidate(h.ctx)?.stopPx).toBeCloseTo(98.8*(1+0.005*1.2));
+    expect(h.brain.stopFor(h.s.instId,"short",100,h.ctx)).toBe(100.75);
+    h.s.refreshedAt = NOW - 240000; expect(profitStopCandidate(h.ctx)?.stopPx).toBeNull();
   });
   it("coach coin filtering restricts new exposure while retaining held-coin exits", () => {
     const h = riskFixture("mochi");

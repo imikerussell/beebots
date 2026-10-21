@@ -14,6 +14,7 @@ export type StrategyParameter = keyof typeof PARAMETER_BOUNDS;
 export type ParameterValues = Partial<Record<StrategyParameter, number>>;
 export function strategyParameters(cfg: Config, cat: BeeId): ParameterValues {
   const { minConviction, minActionProbability } = cfg.cats[cat];
+  if (cfg.strategyEngine === "upstream") return cat === "mochi" ? { minActionProbability } : {};
   return cat === "tiger" ? { minConviction, minActionProbability,
     ...(cfg.strategies.tiger.signalMode === "trend_breakout" ? {} : {
       minMomentumPct: cfg.strategies.tiger.minMomentumPct, momentumAtrMult: cfg.strategies.tiger.momentumAtrMult }) }

@@ -45,9 +45,26 @@ export interface CatLimits extends BeeKnobs {
   maxEntryChaseAtr: number;
   longOnly: boolean;
 }
+export interface ExitSettings {
+  breakevenAtR: number;
+  breakevenBufferBps: number;
+  trailActivationR: number;
+  trailAtrMult: number;
+  profitLockAtR: number;
+  maxGivebackPct: number;
+  partialTakeProfitEnabled: boolean;
+  partialTakeProfitAtR: number;
+  partialTakeProfitFraction: number;
+  reviewMinR: number;
+  reviewIntervalSeconds: number;
+  minActionProbability: number;
+}
 export interface Config {
+  exits: Record<BeeId, ExitSettings>;
   mode: Mode;
-  decisionProvider: "lmstudio" | "jev";
+  decisionProvider: "lmstudio" | "jev" | "gemini";
+  strategyEngine: "catfolio" | "upstream";
+  gemini: { apiKey: string; model: string; timeoutMs: number; dailyUsdCap: number; usdPerMTok: number; usdPerMTokOut: number; minIntervalMs: number; thinkingLevel?: string };
   jev: {
     transport: "typesafe" | "vercel";
     origin: string;
@@ -154,9 +171,12 @@ export function loadConfig(
       );
     return n;
   };
-  const decisionProvider = str("DECISION_PROVIDER", "lmstudio");
-  if (decisionProvider !== "lmstudio" && decisionProvider !== "jev")
-    throw new ConfigError("DECISION_PROVIDER must be lmstudio or jev");
+  const decisionProvider = str("DECISION_PROVIDER", env.GEMINI_API_KEY?.trim() ? "gemini" : "lmstudio");
+  if (decisionProvider !== "lmstudio" && decisionProvider !== "jev" && decisionProvider !== "gemini")
+    throw new ConfigError("DECISION_PROVIDER must be lmstudio, jev or gemini");
+  const strategyEngine = str("STRATEGY_ENGINE", decisionProvider === "gemini" ? "upstream" : "catfolio");
+  if (strategyEngine !== "catfolio" && strategyEngine !== "upstream") throw new ConfigError("STRATEGY_ENGINE must be upstream or catfolio");
+  const upstream = strategyEngine === "upstream";
   const jevTransport = str("JEV_TRANSPORT", "typesafe");
   if (jevTransport !== "typesafe" && jevTransport !== "vercel")
     throw new ConfigError("JEV_TRANSPORT must be typesafe or vercel");
@@ -188,6 +208,7 @@ export function loadConfig(
     );
   const total = num("TOTAL_START_EQUITY_USD", 200, 0.01);
   const cats = {} as Record<BeeId, CatLimits>;
+  const exits = {} as Record<BeeId, ExitSettings>;
   const slots = {} as Record<BeeId, SlotProfile>;
   for (const [i, id] of CATS.entries()) {
     const tiger = id === "tiger",
@@ -206,28 +227,45 @@ export function loadConfig(
       ),
       maxTradesPerDay: num(
         `${p}_MAX_ENTRIES_PER_DAY`,
-        tiger ? 12 : 3,
+        upstream ? (tiger ? 4 : 2) : (tiger ? 12 : 3),
         0,
         1000,
         true,
       ),
-      cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? 5 : 240, 0),
+      cooldownMinutes: num(`${p}_COOLDOWN_MINUTES`, tiger ? (upstream ? 30 : 5) : 240, 0),
       spreadGateBps: num(`${p}_SPREAD_GATE_BPS`, 5, 0.01, 100),
       minVolumeUsd: num(`${p}_MIN_24H_VOLUME_USD`, 1e6, 0),
-      feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, tiger ? 3 : 1, 0),
+      feeBudgetUsdDay: num(`${p}_FEE_BUDGET_USD_DAY`, upstream ? (tiger ? 1.2 : 0.75) : (tiger ? 3 : 1), 0),
       minActionProbability: num(
         `${p}_MIN_ACTION_PROBABILITY`,
-        tiger ? 0.55 : 0.7,
+        tiger || upstream ? 0.55 : 0.7,
         0,
         1,
       ),
-      minConviction: num(`${p}_MIN_CONVICTION`, tiger ? 1 : 2, 0, 3),
+      minConviction: num(`${p}_MIN_CONVICTION`, tiger || upstream ? 1 : 2, 0, 3),
       minStopCostRatio: num(`${p}_MIN_STOP_COST_RATIO`, 3, 0, 20),
       maxEntryCandidates: num(`${p}_MAX_ENTRY_CANDIDATES`, 1, 1, tiger ? 12 : 2, true),
       maxEntryChaseAtr: num(`${p}_MAX_ENTRY_CHASE_ATR`, 0.5, 0, 10),
-      stopAtrMult: num(`${p}_STOP_ATR_MULT`, tiger ? 1.5 : 2, 0.1, 20),
+      stopAtrMult: num(`${p}_STOP_ATR_MULT`, tiger && !upstream ? 1.5 : 2, 0.1, 20),
       longOnly: false,
       maxFlatMinutes: Infinity, // Legacy brain port; current strategies never force entries.
+    };
+    const partialEnabled = str(`${p}_PARTIAL_TAKE_PROFIT_ENABLED`, "true");
+    if (!["true", "false"].includes(partialEnabled))
+      throw new ConfigError(`${p}_PARTIAL_TAKE_PROFIT_ENABLED must be true or false`);
+    exits[id] = {
+      breakevenAtR: num(`${p}_BREAKEVEN_AT_R`, tiger ? 0.5 : 1, 0, 100),
+      breakevenBufferBps: num(`${p}_BREAKEVEN_BUFFER_BPS`, 1, 0, 100),
+      trailActivationR: num(`${p}_TRAIL_ACTIVATION_R`, tiger ? 0.75 : 1.5, 0, 100),
+      trailAtrMult: num(`${p}_TRAIL_ATR_MULT`, tiger ? 1 : 1.5, 0.1, 20),
+      profitLockAtR: num(`${p}_PROFIT_LOCK_AT_R`, tiger ? 1 : 2, 0, 100),
+      maxGivebackPct: num(`${p}_MAX_PROFIT_GIVEBACK_PCT`, tiger ? 35 : 40, 0, 100),
+      partialTakeProfitEnabled: partialEnabled === "true",
+      partialTakeProfitAtR: num(`${p}_PARTIAL_TAKE_PROFIT_AT_R`, tiger ? 1.5 : 2, 0.01, 100),
+      partialTakeProfitFraction: num(`${p}_PARTIAL_TAKE_PROFIT_FRACTION`, 0.5, 0.01, 0.99),
+      reviewMinR: num(`${p}_EXIT_REVIEW_MIN_R`, tiger ? 0.5 : 1, 0, 100),
+      reviewIntervalSeconds: num(`${p}_EXIT_REVIEW_INTERVAL_SECONDS`, tiger ? 60 : 300, 10, 86400, true),
+      minActionProbability: num(`${p}_EXIT_MIN_ACTION_PROBABILITY`, 0.4, 0, 1),
     };
     const saved = settings?.cats[i];
     if (saved && saved.id !== id)
@@ -237,13 +275,13 @@ export function loadConfig(
     slots[id] = {
       name: str(`${p}_NAME`, saved?.name ?? (tiger ? "DARK Wall-E" : "Good Wall-E")),
       style: tiger ? "bizzy" : "breezy",
-      tagline: tiger ? "Active long/short momentum" : "Breezy long/short trend",
+      tagline: tiger ? (upstream ? "Argon band fades & breakouts" : "Active long/short momentum") : "Breezy long/short trend",
       rules:
         migrateStrategyRules(saved?.rules) ??
-        (tiger
+        (upstream ? (tiger ? "Take strict band fades and confirmed breakouts. Bank targets and cut failed setups. WAIT is valid." : "Follow qualified BTC/ETH Donchian trends. Wait in chop, ride winners, and reduce when the trend weakens.") : tiger
           ? "Assess the qualified LONG or SHORT candidate against WAIT on each completed signal bar. HOLD a continuing move. Code handles signal exits and protective stops; prefer persistence after costs."
           : "Assess the qualified directional trend against WAIT on each completed four-hour bar. Ride winners and add only within the risk budget above +1R. Trim a weakening trend once; code handles exits."),
-      coins: tiger ? [...BIZZY_BREAKOUT_COINS] : ["BTC", "ETH"],
+      coins: tiger ? (upstream ? ["BTC", "ETH", "SOL", "HYPE", "XRP", "SUI", "DOGE", "LINK"] : [...BIZZY_BREAKOUT_COINS]) : ["BTC", "ETH"],
       customImage: false,
       fromSetup: !!saved,
     };
@@ -287,9 +325,10 @@ export function loadConfig(
   const adminToken = env.COACH_ADMIN_TOKEN?.trim() || undefined;
   if (adminToken && adminToken.length < 24) throw new ConfigError("COACH_ADMIN_TOKEN must be at least 24 characters");
   return {
+    exits,
     coach: {
-      enabled: coachEnabled === "true",
-      autoApply: coachAutoApply === "true",
+      enabled: !upstream && coachEnabled === "true",
+      autoApply: !upstream && coachAutoApply === "true",
       apiKey: env.AI_GATEWAY_API_KEY?.trim() || undefined,
       adminToken,
       model: str("COACH_MODEL", "anthropic/claude-sonnet-4.6"),
@@ -311,6 +350,17 @@ export function loadConfig(
       },
     },
     mode,
+    strategyEngine,
+    gemini: {
+      apiKey: env.GEMINI_API_KEY?.trim() || "",
+      model: str("GEMINI_MODEL", "gemini-4-argon"),
+      timeoutMs: num("GEMINI_TIMEOUT_MS", 3000, 100, 300000),
+      dailyUsdCap: num("GEMINI_DAILY_USD_CAP", 3, 0),
+      usdPerMTok: num("GEMINI_USD_PER_MTOK", 4, Number.MIN_VALUE),
+      usdPerMTokOut: num("GEMINI_USD_PER_MTOK_OUT", 20, Number.MIN_VALUE),
+      minIntervalMs: num("GEMINI_MIN_INTERVAL_MS", 60000, 0),
+      thinkingLevel: env.GEMINI_THINKING_LEVEL?.trim() || undefined,
+    },
     slots,
     cats,
     creds,
@@ -324,7 +374,7 @@ export function loadConfig(
       timeoutMs: num("JEV_TIMEOUT_MS", 10000, 100, 300000),
       concurrency: num("JEV_CONCURRENCY", 1, 1, 2, true),
       dailyUsdCap: num("JEV_DAILY_USD_CAP", 2, 0),
-      usdPerMTok: num("JEV_USD_PER_MTOK", 0.042, 0),
+      usdPerMTok: num("JEV_USD_PER_MTOK", 0.042, decisionProvider === "jev" ? Number.MIN_VALUE : 0),
     },
     local: {
       origin,
@@ -357,7 +407,7 @@ export function loadConfig(
     },
     bees: { bizzy: cats.tiger, breezy: cats.mochi, boozy: cats.tiger },
     breezy: { minOpenProb: cats.mochi.minActionProbability, minSizeUsd: 10 }, // Historical brain fixtures only.
-    bizzy: { sizeFraction: 1, universeSize: 3, timeStopMinutes: 240 },
+    bizzy: { sizeFraction: upstream ? 0.5 : 1, universeSize: upstream ? 8 : 3, timeStopMinutes: 240 },
     boozy: { candidates: 3 },
     universe: {
       min24hVolUsd: Math.min(cats.tiger.minVolumeUsd, cats.mochi.minVolumeUsd),

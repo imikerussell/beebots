@@ -1,6 +1,6 @@
 # Dark Wall-E: completed-bar long/short strategies
 
-Current version: `catfolio-8-bar-driven-strategies`. These are experimental paper strategies, not demonstrated profitable systems. See the [measured audit](../docs/STRATEGY_REVIEW_2026-10-16.md) and [retrospective comparison](../docs/STRATEGY_BACKTEST_2026-10-16.md).
+Current version: `catfolio-9-profit-protection`. These are experimental paper strategies, not demonstrated profitable systems. See the [profit-exit controls](../docs/PROFIT_EXITS_2026-10-19.md); the earlier [measured audit](../docs/STRATEGY_REVIEW_2026-10-16.md) and [retrospective comparison](../docs/STRATEGY_BACKTEST_2026-10-16.md) do not validate version 9 exits.
 
 ## Entry opportunities
 
@@ -16,10 +16,10 @@ Rank qualifying markets by absolute one-hour return / ATR. Offer the top `TIGER_
 
 ## Decision cadence and exits
 
-One decision attempt per current completed 15-minute bar, persisted before inference. Provider errors, vetoes, fills, stops and restarts do not grant another attempt on that bar. A late market is omitted until the next bar; owner/configuration changes create a new revision. When only HOLD is possible, code handles it without a model call.
+One entry decision attempt per current completed 15-minute bar, persisted before inference. Provider errors, vetoes, fills, stops and restarts do not grant another entry attempt on that bar. A late market is omitted until the next bar; owner/configuration changes create a new revision. Eligible winners also receive a separate profit review every configured interval (default 60 seconds above 0.5 net R). Between-bar reviews may hold or reduce exposure. When only HOLD is possible, code handles it without a model call.
 
-The model cannot close an otherwise continuing signal or immediately flip it. Momentum modes exit when both one-hour return and MACD oppose the position. Breakout mode exits beyond the prior `TIGER_EXIT_BARS` (default 10) opposite channel or on an opposite hourly regime. Stops and time/loss limits take precedence.
+Jev may select CLOSE_PROFIT or optional TAKE_PROFIT when current net profit qualifies; it cannot immediately flip a position. Selected discretionary exits need `TIGER_EXIT_MIN_ACTION_PROBABILITY` (default 0.4), without the entry conviction requirement. Momentum modes also exit deterministically when both one-hour return and MACD oppose the position. Breakout mode exits beyond the prior `TIGER_EXIT_BARS` (default 10) opposite channel or on an opposite hourly regime. Stops and time/loss limits take precedence over model choices.
 
-Initial stop: `TIGER_STOP_ATR_MULT` × 15-minute ATR (default 1.5). After +1R, the ATR trail can only tighten. Maximum hold: `TIGER_MAX_HOLD_MINUTES` (default 120). Current capital, stop-risk, exposure, daily fee/entry/loss and cooldown limits apply. No forced entry or risk-budget increase is introduced.
+Initial stop: `TIGER_STOP_ATR_MULT` × 15-minute ATR (default 1.5). Separately configured protection defaults to cost-covering breakeven after 0.5 net R, a 1 ATR trail after 0.75 net R, and retaining 65% of peak net profit after 1 net R. Stops only tighten. Optional partial profit-taking offers a one-time 50% reduction at 1.5 current net R, subject to exchange minimum sizes and Jev selection. Maximum hold: `TIGER_MAX_HOLD_MINUTES` (default 120). Current capital, stop-risk, exposure, daily fee/entry/loss and cooldown limits apply; entry and fee caps do not block reductions. No forced entry or risk-budget increase is introduced.
 
 Protection and marking still use the serialized engine tick, normally ten seconds. Outstanding inference may delay the next tick. Existing positions are preserved on upgrade and then follow the new deterministic exits; stops are not reset. Old trainer overlays retire, and the trainer is advisory unless `COACH_AUTO_APPLY=true` is explicitly configured.

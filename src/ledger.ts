@@ -72,6 +72,10 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
     const total = p.contracts + f.contracts;
     p.entryPx = (p.entryPx * p.contracts + f.px * f.contracts) / total;
     p.contracts = total;
+    if (p.entryFeesUsd !== undefined) p.entryFeesUsd += f.feeUsd;
+    // A different average/quantity has no observed combined-position peak yet.
+    delete p.exitPeakPx;
+    delete p.exitPeakNetPerUnit;
     // An add makes the position bigger, so 1R grows with it (it used to stay at the first fill's risk).
     const initStop = p.initialStopPx ?? p.stopPx;
     if (initStop !== null && initStop !== undefined)
@@ -83,6 +87,9 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
   realised = pDir * (f.px - p.entryPx) * closed * f.ctVal;
   bee.cashUsd += realised;
   bee.totals.realisedUsd += realised;
+  const remainingRatio = p.contracts > 0 ? (p.contracts - closed) / p.contracts : 0;
+  if (p.entryFeesUsd !== undefined) p.entryFeesUsd *= remainingRatio;
+  if (p.fundingAccruedUsd !== undefined) p.fundingAccruedUsd *= remainingRatio;
   p.riskUsd =
     p.contracts > 0 ? p.riskUsd * ((p.contracts - closed) / p.contracts) : 0;
   p.contracts = Number((p.contracts - closed).toFixed(8));
@@ -91,7 +98,7 @@ export function applyFill(bee: BeeState, f: LedgerFill): number {
     bee.flatSince = f.ts;
     const rest = f.contracts - closed;
     if (rest > 1e-9) {
-      bee.position = newPosition({ ...f, contracts: rest }, dir);
+      bee.position = newPosition({ ...f, contracts: rest, feeUsd: f.feeUsd * rest / f.contracts }, dir);
       bee.flatSince = null;
     }
   }
@@ -118,12 +125,36 @@ function newPosition(f: LedgerFill, dir: number): Position {
     openedAt: f.ts,
     stopPx: null,
     riskUsd: 0,
+    entryFeesUsd: f.feeUsd,
+    fundingAccruedUsd: 0,
   };
 }
 
-export function applyFunding(bee: BeeState, amountUsd: number): void {
+export function applyFunding(bee: BeeState, amountUsd: number, positionAmountUsd = amountUsd): void {
   bee.cashUsd += amountUsd;
   bee.totals.fundingUsd += amountUsd;
+  if (bee.position)
+    bee.position.fundingAccruedUsd = (bee.position.fundingAccruedUsd ?? 0) + positionAmountUsd;
+}
+
+/** Allocate a late funding bill through subsequent reductions; adds do not earn historical funding. */
+export function fundingForRemainingPosition(
+  amountUsd: number,
+  contracts: number,
+  side: Position["side"],
+  laterFills: ReadonlyArray<{ side: "buy" | "sell"; contracts: number }>,
+): number {
+  const openingSide = side === "long" ? "buy" : "sell";
+  const deltas = laterFills.map(f => (f.side === openingSide ? 1 : -1) * f.contracts);
+  let quantity = contracts - deltas.reduce((a, b) => a + b, 0);
+  if (!(quantity > 0)) return 0;
+  let allocated = amountUsd;
+  for (const delta of deltas) {
+    if (delta < 0) allocated *= Math.max(0, quantity + delta) / quantity;
+    quantity += delta;
+    if (!(quantity > 0)) return 0;
+  }
+  return allocated;
 }
 
 /** Mark to market at `markPx`. */

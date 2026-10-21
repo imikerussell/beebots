@@ -463,7 +463,7 @@ describe("Catfolio engine, protection and recovery", () => {
       .get("tiger") as { audit: string };
     const audit = JSON.parse(row.audit);
     expect(audit).toMatchObject({
-      strategyVersion: "catfolio-8-bar-driven-strategies",
+      strategyVersion: "catfolio-9-profit-protection",
       rubricVersion: "selected-setup-conviction-2",
       config: { model: "", slippageBps: 2 },
     });
@@ -880,9 +880,10 @@ describe("active strategy position management reaches the executor", () => {
     if (isDark(ask)) return answer(ask, ask.menu.HOLD ? "HOLD" : "WAIT");
     return answer(ask, choice);
   }
-  it("opens a short and adds to the winner without resetting its stop, entry score or opening count", async () => {
+  it("can add to a short winner when optional profit management is disabled, preserving entry risk and count", async () => {
     let choice = "SHORT_BTC";
-    const cfg = loadConfig({MOCHI_COOLDOWN_MINUTES:"0"});
+    const cfg = loadConfig({MOCHI_COOLDOWN_MINUTES:"0", MOCHI_BREAKEVEN_AT_R:"0", MOCHI_TRAIL_ACTIVATION_R:"0",
+      MOCHI_PROFIT_LOCK_AT_R:"0", MOCHI_EXIT_REVIEW_MIN_R:"0", MOCHI_PARTIAL_TAKE_PROFIT_ENABLED:"false"});
     const h = await harness(async ask => pick(ask, choice), {cfg,activeCadence:true});
     h.s.trend!.score = -9;
     await h.engine.tick();

@@ -1,8 +1,8 @@
 {
   "name": "catfolio",
-  "version": "2026.10.2",
+  "version": "2026.10.21",
   "private": true,
-  "description": "Two independent cats trading on paper with local Nimble decisions",
+  "description": "Two independent cats with upstream Argon strategies and auditable paper trading",
   "type": "module",
   "engines": {
     "node": ">=22.13"
@@ -38,6 +38,7 @@
     "research:compare": "tsx src/research/compare.ts",
     "paper:stop": "tsx --env-file-if-exists=.env src/tools/paper-stop.ts",
     "test:integration": "vitest run test/local-integration.test.ts test/engine.test.ts test/jev.test.ts",
+    "effective-config": "tsx src/tools/effective-config.ts",
     "provider:check": "tsx --env-file-if-exists=.env src/tools/provider-check.ts"
   },
   "dependencies": {

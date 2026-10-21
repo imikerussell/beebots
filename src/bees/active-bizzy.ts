@@ -2,6 +2,7 @@
 import type { CoinStats } from "../market/types.js";
 import { BIZZY_BREAKOUT_COINS } from "./bizzy.js";
 import { atrStop, currentSignalBar, decisionBarKey, r2, roundTripCostPct } from "./common.js";
+import { profitReviewKey, profitReviewMenu } from "./profit-management.js";
 import type { BeeBrain, BeeContext, Menu, Side } from "./types.js";
 
 export const ACTIVE_MOMENTUM_ATR = 0.25;
@@ -77,10 +78,13 @@ function candidates(ctx: BeeContext): CoinStats[] {
 
 export const activeBizzy: BeeBrain = {
   id: "bizzy",
-  strategy: "Evaluate the offered LONG or SHORT candidate against WAIT once per completed 15-minute signal bar. Code ranks and filters candidates under the configured momentum, trend-aligned momentum or trend-breakout mode. Prefer persistent directional evidence; an observed past move is not expected future profit. WAIT if the offered trade is unconvincing after costs. HOLD while invested: code handles signal invalidation, ATR stops, trailing stops and the configured maximum holding time. Do not churn a position on price noise. Conviction describes the offered setup, not a calibrated win probability.",
+  strategy: "Evaluate the offered LONG or SHORT candidate against WAIT once per completed 15-minute signal bar. Code ranks and filters candidates under the configured momentum, trend-aligned momentum or trend-breakout mode. Prefer persistent directional evidence; an observed past move is not expected future profit. WAIT if the offered trade is unconvincing after costs. While invested, profit reviews can occur between signal bars. Compare HOLD with CLOSE_PROFIT or optional TAKE_PROFIT when offered: hold when directional evidence persists, take some or all profit when momentum weakens or estimated net profit gives back from its peak. Use the supplied profit estimates after costs; never assume a green gross return is a net gain. Code independently enforces signal invalidation, cost-covering stops, trailing stops, peak-profit protection and maximum holding time, even if you HOLD or inference is unavailable. Do not churn on price noise. Choice probabilities are relative menu weights, not calibrated win probabilities; exits use their configured probability threshold without the entry conviction gate, and do not require certainty.",
   convictionLabels: ["meh", "decent", "strong", "very strong"],
   neverForce: true,
   decisionKey: ctx => decisionBarKey(ctx,15),
+  profitProtection: true,
+  managementKey: profitReviewKey,
+  exitGate: ctx => ({ minProb: ctx.cfg.exits[ctx.bee.id].minActionProbability }),
   protectiveExit: exitReason,
   entryGate: ctx => ({ minConviction: ctx.cfg.cats[ctx.bee.id].minConviction, minProb: ctx.cfg.cats[ctx.bee.id].minActionProbability }),
   timeStopMinutes: ctx => ctx.cfg.strategies.tiger.maxHoldMinutes,
@@ -115,18 +119,15 @@ export const activeBizzy: BeeBrain = {
     }
     menu.HOLD = { desc: "momentum still supports the position", intent: { kind: "hold" } };
     const exit = exitReason(ctx);
-    if (exit) menu.CLOSE = { desc: "completed-bar signal invalidated", intent: { kind: "close", reason: exit } };
+    if (exit) {
+      menu.CLOSE = { desc: "completed-bar signal invalidated", intent: { kind: "close", reason: exit } };
+      return menu;
+    }
+    Object.assign(menu, profitReviewMenu(ctx));
     return menu;
   },
   forcedEntry: () => null,
   sizeFrac: intent => intent.sizeFrac,
   stopFor: (id, side, px, ctx) => atrStop(ctx.view.stats.get(id), side, px, ctx.knobs.stopAtrMult),
-  trail(ctx) {
-    const p = ctx.bee.position, s = p ? ctx.view.stats.get(p.instId) : undefined;
-    if (!p || !s || (ctx.uplR ?? 0) < 1) return null;
-    const age = ctx.now - (s.refreshedAt ?? ctx.view.ts);
-    if (age < 0 || age > 3 * ctx.cfg.dataRefreshMs || momentumThreshold(s, ctx) === null) return null;
-    return atrStop(s, p.side, s.mid, ctx.knobs.stopAtrMult);
-  },
   idleStatus: ctx => `waiting for a qualified ${ctx.cfg.strategies.tiger.signalMode.replaceAll("_", " ")} entry`,
 };

@@ -24,6 +24,14 @@ export interface Position {
   entryScore?: number;
   /** One score-deterioration trim per position, persisted with its fill. */
   trendTrimmed?: boolean;
+  /** Remaining opening fee basis and net funding credit, allocated on partial closes. */
+  entryFeesUsd?: number;
+  fundingAccruedUsd?: number;
+  /** Executable, after-cost profit high-water mark for the remaining position. */
+  exitPeakPx?: number;
+  exitPeakNetPerUnit?: number;
+  /** One discretionary profit partial per position, set only after a positive fill. */
+  profitTaken?: boolean;
 }
 
 export type CapReason = "trade_cap" | "fee_budget" | "loss_stop" | "retired";
@@ -48,6 +56,8 @@ export interface BeeState {
   lastEntryAt: number | null;
   /** Last consumed strategy/configuration + completed-signal-bar key, persisted across restarts. */
   strategyDecisionKey?: string;
+  /** Separate persisted cadence for reviews of an existing position's profit. */
+  profitDecisionKey?: string;
   peakEquityUsd: number;
   maxDrawdownPct: number;
   exposedMs: number;
@@ -86,7 +96,7 @@ export type Intent =
       setup: "strict" | "loose";
     }
   | { kind: "add"; sizeFrac: number }
-  | { kind: "trim"; fraction: number };
+  | { kind: "trim"; fraction: number; reason?: "profit_take" };
 
 /** What the risk layer lets through to execution. Sizes are resolved to USD notional. */
 export type Action =
@@ -95,7 +105,7 @@ export type Action =
   | { kind: "close"; reason: string }
   | { kind: "switch"; instId: string; side: Side; notionalUsd: number }
   | { kind: "add"; notionalUsd: number }
-  | { kind: "trim"; fraction: number };
+  | { kind: "trim"; fraction: number; reason?: "profit_take" };
 
 export interface MenuOption {
   /** null when the label says it all (saves Jev tokens). */
@@ -124,6 +134,11 @@ export interface BeeBrain {
   menu(ctx: BeeContext): Menu;
   /** Optional discretionary cadence: one decision per completed signal key; null means protection only. */
   decisionKey?(ctx: BeeContext): string | null;
+  /** Profit reviews can run between entry bars, without resampling entries. */
+  managementKey?(ctx: BeeContext): string | null;
+  profitProtection?: boolean;
+  /** Reducing actions use their own probability threshold, without entry conviction gates. */
+  exitGate?(ctx: BeeContext): { minProb: number };
   /** Per-coin numbers for this bee's snapshot. */
   coinSnapshot(
     s: CoinStats,

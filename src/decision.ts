@@ -1,5 +1,7 @@
 import type { Menu } from "./bees/types.js";
-export const STRATEGY_VERSION = "catfolio-8-bar-driven-strategies";
+export const STRATEGY_VERSION = "catfolio-9-profit-protection";
+export const ARGON_STRATEGY_VERSION = "catfolio-argon-6cf999a-1";
+export const strategyVersion = (cfg: { strategyEngine: string }) => cfg.strategyEngine === "upstream" ? ARGON_STRATEGY_VERSION : STRATEGY_VERSION;
 export const RUBRIC_VERSION = "selected-setup-conviction-2";
 export const CONVICTION = [
   "0: No confirmed setup; insufficient or conflicting evidence",
@@ -8,6 +10,7 @@ export const CONVICTION = [
   "3: Very strong setup; broad confirmation with few conflicts",
 ] as const;
 export interface DecisionAsk {
+  key?: string;
   strategy: string;
   state: Record<string, unknown>;
   menu: Menu;
@@ -28,7 +31,9 @@ export interface DecisionAnswer {
   inputTokens: number;
   latencyMs: number;
   model: string;
-  source: "model" | "rules";
+  source: "model" | "rules" | "code";
+  decidedBy?: "gemini" | "jev" | "lmstudio" | "code" | "rules";
+  fallbackReason?: string;
 }
 export interface DecisionFailure {
   costUsd?: number;
@@ -55,6 +60,11 @@ export interface DecisionProvider {
     activeRequests?: number;
     queuedRequests?: number;
     retryAt?: number | null;
+    reservedUsd?: number;
+    budgetRefused?: boolean;
+    lastFallback?: { reason: string; at: number } | null;
+    minIntervalMs?: number;
+    probabilityKind?: "self_reported";
   };
   close?(): void;
 }

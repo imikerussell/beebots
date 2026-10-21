@@ -11,7 +11,7 @@ if (cfg.decisionProvider === "lmstudio") {
   const provider = createDecisionProvider(cfg, db);
   try {
     console.log(
-      `Jev cloud check (${cfg.jev.transport}): ${cfg.jev.model}. This typed decision request can incur API charges. No orders.`,
+      `${cfg.decisionProvider} connection check. This decision request can incur API charges. No orders.`,
     );
     const result = await provider.decide({
       strategy: "Connection test. Select WAIT when no confirmed setup exists.",
@@ -31,12 +31,12 @@ if (cfg.decisionProvider === "lmstudio") {
     });
     console.log(
       JSON.stringify(
-        { ...result, provider: "jev", execution: "disabled" },
+        { ...result, provider: cfg.decisionProvider, execution: "disabled" },
         null,
         2,
       ),
     );
-    if (!result.ok) process.exitCode = 1;
+    if (!result.ok || result.source !== "model") process.exitCode = 1;
   } finally {
     provider.close();
     db.close();

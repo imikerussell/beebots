@@ -35,8 +35,8 @@ export function EquityChart({ curve, color, baseline, gradientId }: Props) {
     const pts = curve.length === 1 ? [[curve[0]![0] - 1000, curve[0]![1]] as [number, number], curve[0]!] : curve;
     const t0 = pts[0]![0];
     const t1 = pts[pts.length - 1]![0];
-    let lo = Math.min(baseline, ...pts.map((p) => p[1]));
-    let hi = Math.max(baseline, ...pts.map((p) => p[1]));
+    let lo = baseline, hi = baseline;
+    for (const [, value] of pts) { lo = Math.min(lo, value); hi = Math.max(hi, value); }
     // Fit the observed movement while keeping the allocation visible. A ten-cent
     // minimum window keeps flat series stable and sub-cent noise in perspective.
     const span = hi - lo;

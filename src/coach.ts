@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { CATS, type BeeId, type Config } from "./config.js";
-import { STRATEGY_VERSION } from "./decision.js";
-import { TRAINER_PROMPT, trainerDisplayName, trainerModePrompt, trainerPlaybook } from "./coach-prompt.js";
+import { strategyVersion } from "./decision.js";
+import { trainerPrompt, trainerDisplayName, trainerModePrompt, trainerPlaybook } from "./coach-prompt.js";
 import type { Db } from "./db.js";
 import { aggregateTrades, completedTrades } from "./performance.js";
 import { applyParameters, strategyParameters, tunableParameters, PARAMETER_BOUNDS, type ParameterValues, type StrategyParameter } from "./strategy-parameters.js";
@@ -118,7 +118,7 @@ function parseReview(body: string, name: string): Answer {
   return review.data;
 }
 // Both current strategies differ from the source engine; do not mix their evidence.
-const evidenceVersions = (_cat: BeeId) => [STRATEGY_VERSION];
+const evidenceVersions = (cfg: Config) => [strategyVersion(cfg)];
 const versionFilter = "json_extract(audit_json,'$.strategyVersion') IN (SELECT value FROM json_each(?))";
 type LegacyAnswer = z.infer<typeof LegacyCoachAnswer>;
 const SavedCoachAnswer = z.union([CoachAnswer, LegacyCoachAnswer]);
@@ -126,7 +126,7 @@ type Values = { rules: string; coins: string[]; parameters: ParameterValues };
 export const coachValues = (cfg: Config, cat: BeeId): Values => ({ rules: cfg.slots[cat].rules, coins: [...cfg.slots[cat].coins], parameters: strategyParameters(cfg, cat) });
 const displayName = trainerDisplayName;
 export function coachRevision(cfg: Config, cat: BeeId): string {
-  return createHash("sha256").update(JSON.stringify([STRATEGY_VERSION, cfg.cats[cat], cfg.strategies[cat], cfg.slots[cat], cfg.mode, cfg.coach.autoApply])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([strategyVersion(cfg), cfg.cats[cat], cfg.strategies[cat], cfg.exits[cat], cfg.slots[cat], cfg.mode, cfg.coach.autoApply])).digest("hex");
 }
 export interface CoachEntry {
   id: number; cat: BeeId; day: string; createdAt: number; expiresAt: number;
@@ -181,12 +181,12 @@ export class CatCoach {
     d.db.raw.prepare("UPDATE coach_reviews SET status='failed', completed_at=?, resolved_at=?, error_code='engine_restarted' WHERE status='reviewing'").run(this.now(), this.now());
     // Retire incompatible overlays without deleting their review history.
     const previousStrategy = d.db.getMeta("coach_strategy_version");
-    if (previousStrategy !== STRATEGY_VERSION) {
+    if (previousStrategy !== strategyVersion(d.cfg)) {
       d.db.transaction(() => {
         d.db.raw.prepare("UPDATE coach_reviews SET status='rolled_back',resolved_at=? WHERE id IN (SELECT review_id FROM coach_rule_overrides UNION SELECT review_id FROM coach_overrides)").run(this.now());
         d.db.raw.prepare("UPDATE coach_reviews SET status='expired',resolved_at=? WHERE status='pending'").run(this.now());
         d.db.raw.exec("DELETE FROM coach_overrides; DELETE FROM coach_rule_overrides;");
-        d.db.setMeta("coach_strategy_version", STRATEGY_VERSION);
+        d.db.setMeta("coach_strategy_version", strategyVersion(d.cfg));
       });
     }
     // Manual-era proposals are historical suggestions, not automatic authorizations.
@@ -226,8 +226,10 @@ export class CatCoach {
     const { cfg, db } = this.d;
     const enabled = cfg.coach.enabled && !!cfg.coach.apiKey && !this.d.closed();
     return {
+      benched: cfg.strategyEngine === "upstream",
       enabled, canReview: !!cfg.coach.adminToken && !this.d.closed(), model: cfg.coach.model, autoApply: cfg.coach.autoApply,
-      message: this.d.closed() ? "Experiment closed; coaching paused." : !cfg.coach.enabled ? "Coach is off. Enable COACH_ENABLED and configure AI_GATEWAY_API_KEY on the engine."
+      message: cfg.strategyEngine === "upstream" ? "Trainer benched. No reviews or strategy changes while the upstream strategies run."
+        : this.d.closed() ? "Experiment closed; coaching paused." : !cfg.coach.enabled ? "Coach is off. Enable COACH_ENABLED and configure AI_GATEWAY_API_KEY on the engine."
         : !cfg.coach.apiKey ? "Set AI_GATEWAY_API_KEY on the engine to enable trainer reviews."
         : cfg.coach.autoApply
           ? "Automatic reviews every 4 hours can apply bounded experimental changes. Numeric changes require completed-trade evidence and a flat position; these checks do not establish profitability."
@@ -260,9 +262,10 @@ export class CatCoach {
   private observations(cat: BeeId, since: number, until: number) {
     return this.d.db.raw.prepare(`SELECT MIN(id) AS id, MIN(ts) AS ts FROM decisions
       WHERE bee=? AND ts>=? AND ts<=? AND ${versionFilter}
-      AND json_extract(audit_json,'$.source') IN ('model_request','rules')
+      AND json_extract(audit_json,'$.source') IN ('model_request','rules','code')
+      AND COALESCE(json_extract(audit_json,'$.decisionKind'),'signal') NOT IN ('profit_review','discarded')
       GROUP BY CAST(ts / ? AS INTEGER) ORDER BY ts`)
-      .all(cat, since, until, JSON.stringify(evidenceVersions(cat)), (cat === "tiger" ? 15 : 240) * 60_000) as Array<{id:number;ts:number}>;
+      .all(cat, since, until, JSON.stringify(evidenceVersions(this.d.cfg)), (cat === "tiger" ? 15 : 240) * 60_000) as Array<{id:number;ts:number}>;
   }
   /** The dashboard and scheduler share evidence and rolling cooldown checks. */
   private readiness(cat: BeeId, now: number, last?: Row) {
@@ -280,7 +283,7 @@ export class CatCoach {
     const db = this.d.db.raw;
     const lastChange = db.prepare("SELECT MAX(resolved_at) AS at FROM coach_reviews WHERE cat=? AND status IN ('accepted','rolled_back')").get(cat) as {at: number | null};
     const since = Math.max(now - COACH_EVIDENCE_WINDOW_MS, lastChange.at ?? 0);
-    const strategyVersions = evidenceVersions(cat), versions = JSON.stringify(strategyVersions);
+    const strategyVersions = evidenceVersions(this.d.cfg), versions = JSON.stringify(strategyVersions);
     const observationIds = JSON.stringify(this.observations(cat, since, now).map(row => row.id));
     const summary = db.prepare(`SELECT COUNT(*) AS decisions, MIN(ts) AS firstAt,
       SUM(CASE WHEN choice='WAIT' OR (choice IS NULL AND (SELECT COUNT(*) FROM json_each(menu_json))=0) THEN 1 ELSE 0 END) AS waits,
@@ -294,14 +297,14 @@ export class CatCoach {
     const blockers = db.prepare(`SELECT b.value AS reason, COUNT(DISTINCT d.id) AS decisions
       FROM decisions d, json_each(d.audit_json,'$.entryDiagnostics') c, json_each(c.value,'$.blockers') b
       WHERE d.id IN (SELECT value FROM json_each(?)) GROUP BY b.value ORDER BY decisions DESC`).all(observationIds);
-    const recent = db.prepare(`SELECT ts, choice, status, vetoed_by AS veto, conviction,
+    const recent = db.prepare(`SELECT ts, choice, status, vetoed_by AS veto, conviction, decided_by AS decidedBy, fallback_reason AS fallbackReason,
       json_extract(audit_json,'$.entryDiagnostics') AS diagnostics
       FROM decisions WHERE id IN (SELECT value FROM json_each(?)) ORDER BY ts DESC,id DESC LIMIT 12`).all(observationIds);
     const entries = db.prepare(`SELECT COUNT(*) AS count FROM orders o JOIN decisions d ON d.id=o.decision_id AND d.bee=o.bee
       WHERE o.bee=? AND o.ts>=? AND o.ts<=? AND ${versionFilter} AND o.purpose='open' AND o.state='filled'`).get(cat, since, now, versions);
     const excluded = db.prepare(`SELECT COUNT(*) AS count FROM decisions WHERE bee=? AND ts>=? AND ts<=?
-      AND json_extract(audit_json,'$.source') IN ('model_request','rules') AND COALESCE((${versionFilter}),0)=0`).get(cat, since, now, versions) as { count: number };
-    const performance = { ...aggregateTrades(completedTrades(this.d.db, cat, { since, until: now, version: STRATEGY_VERSION })),
+      AND json_extract(audit_json,'$.source') IN ('model_request','rules','code') AND COALESCE((${versionFilter}),0)=0`).get(cat, since, now, versions) as { count: number };
+    const performance = { ...aggregateTrades(completedTrades(this.d.db, cat, { since, until: now, version: strategyVersion(this.d.cfg) })),
       note: "Completed current-version round trips opened within this window; partial, mixed-version and unidentified trades are excluded. Slippage is embedded. Funding and model costs are separate and unallocated; a positive sample is not validated profitability." };
     return { performance, since, until: now, strategyVersions, excludedObservations: excluded.count, summary, outcomes, blockers, recent, entries, current: this.d.context(cat) };
   }
@@ -330,7 +333,7 @@ export class CatCoach {
       let stage: "request" | "response" | "change" = "request";
       try {
         const messages = [
-          { role: "system", content: `${TRAINER_PROMPT}\n\n${trainerModePrompt(cfg)}` },
+          { role: "system", content: `${trainerPrompt(cfg)}\n\n${trainerModePrompt(cfg)}` },
           { role: "user", content: JSON.stringify({ cat: { id: cat, name: displayName(cfg, cat), current: coachValues(cfg, cat), allowedCoins: this.baseline[cat].coins, tunableParameters: tunableParameters(cfg, cat) },
             decisionIntervalMs: cfg.tickMs, trainerPolicy: { autoApply: cfg.coach.autoApply, mode: cfg.coach.autoApply ? "automatic_experiment" : "advisory" }, playbook: trainerPlaybook(cfg),
             scorecard: CATS.map(id => ({ cat: id, name: displayName(cfg, id), current: coachValues(cfg, id), evidence: id === cat ? evidence : this.evidence(id, now) })),
